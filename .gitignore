@@ -1,0 +1,4 @@
+Akten_selektiert
+*.png*
+*__pycache__*
+venv
