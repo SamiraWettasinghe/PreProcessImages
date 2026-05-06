@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -18,13 +19,16 @@ POINT_COLOR = "#ff3344"
 POINT_OUTLINE = "#ffffff"
 LINE_COLOR = "#22ff88"
 LABEL_COLOR = "#ffeb3b"
-HIT_RADIUS = 14  # canvas-px grab zone, larger than visual radius
+HIT_RADIUS = 14      # canvas-px grab zone, larger than visual radius
+CANVAS_BUFFER = 150  # dark padding (canvas px) around the image for out-of-bounds points
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 
-_HERE    = Path(__file__).resolve().parent
-BASE_DIR = _HERE / "Akten_selektiert"
-OUT_DIR  = _HERE / "Akten_selektiert_corrected"
+_HERE           = Path(__file__).resolve().parent
+BASE_DIR        = _HERE / "Akten_selektiert"
+OUT_DIR         = _HERE / "Akten_selektiert_corrected"
+LABELS_FILE     = _HERE / "labels.json"
+CORRECTIONS_FILE = _HERE / "corrections.json"
 
 
 class PerspectiveApp:
@@ -34,8 +38,10 @@ class PerspectiveApp:
         1. App loads all images from Akten_selektiert/ on startup.
         2. Click the four corners of the text region (any order); drag to adjust.
            The right pane shows the existing corrected version (if any).
-        3. Click Apply — the rectified image is written to Akten_selektiert_corrected/
-           mirroring the original subdirectory layout, and shown immediately on the right.
+        3. Click Apply — a label dialog appears. Choose / type a label (or leave
+           blank for no category). The rectified image is saved under
+           Akten_selektiert_corrected/<label>/<relative_path>.
+           Re-applying deletes the old corrected file first.
         4. Use Prev / Next (or ← →) to move through the image list.
            Points are remembered per image so you can revisit and re-apply.
     """
@@ -61,7 +67,13 @@ class PerspectiveApp:
         self._current_idx: int = 0
         self._saved_points: dict[str, list[tuple[float, float]]] = {}
 
+        # Persistent data
+        self._labels: list[str] = []       # dropdown history
+        self._corrections: dict[str, str] = {}  # rel_src (posix) → rel_out (posix, within OUT_DIR)
+
         self._resize_job: str | None = None
+        self._load_labels()
+        self._load_corrections()
         self._build_ui()
         self.root.bind("<Configure>", self._on_window_resize)
 
@@ -126,6 +138,30 @@ class PerspectiveApp:
         self.root.bind("<Left>",      lambda _e: self.go_prev())
         self.root.bind("<Right>",     lambda _e: self.go_next())
 
+    # -------------------------------------------------- Persistent storage --
+
+    def _load_labels(self) -> None:
+        try:
+            self._labels = json.loads(LABELS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            self._labels = []
+
+    def _save_labels(self) -> None:
+        LABELS_FILE.write_text(
+            json.dumps(self._labels, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def _load_corrections(self) -> None:
+        try:
+            self._corrections = json.loads(CORRECTIONS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            self._corrections = {}
+
+    def _save_corrections(self) -> None:
+        CORRECTIONS_FILE.write_text(
+            json.dumps(self._corrections, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
     # --------------------------------------------------------- Image list ---
 
     def _load_image_list(self) -> None:
@@ -138,8 +174,19 @@ class PerspectiveApp:
         )
         self._update_nav_label()
 
-    def _output_path(self, src: Path) -> Path:
-        return OUT_DIR / src.relative_to(BASE_DIR)
+    def _corrected_path(self, src: Path) -> Path | None:
+        """Return the on-disk path of src's corrected version, or None if it doesn't exist."""
+        rel_src = src.relative_to(BASE_DIR).as_posix()
+        rel_out = self._corrections.get(rel_src)
+        if rel_out is not None:
+            p = OUT_DIR / Path(rel_out)
+            return p if p.exists() else None
+        # Backward-compat: check the unlabeled location used before the label feature.
+        p = OUT_DIR / src.relative_to(BASE_DIR)
+        return p if p.exists() else None
+
+    def _is_corrected(self, src: Path) -> bool:
+        return self._corrected_path(src) is not None
 
     # --------------------------------------------------------- Navigation ---
 
@@ -168,11 +215,11 @@ class PerspectiveApp:
         self.points = list(self._saved_points.get(str(src), []))
         self._drag_idx = None
 
-        # Load corrected version if it already exists.
-        out = self._output_path(src)
-        if out.exists():
+        # Load corrected version from disk if it exists.
+        cp = self._corrected_path(src)
+        if cp is not None:
             try:
-                cdata = np.fromfile(str(out), dtype=np.uint8)
+                cdata = np.fromfile(str(cp), dtype=np.uint8)
                 self.corrected = cv2.imdecode(cdata, cv2.IMREAD_COLOR)
             except Exception:
                 self.corrected = None
@@ -184,11 +231,11 @@ class PerspectiveApp:
         self._set_load_status(src)
 
     def _set_load_status(self, src: Path) -> None:
-        already_done = self._output_path(src).exists()
-        if already_done and self.points:
-            self._set_status(f"{src.name}  [corrected] — adjust & re-apply, or press Next ▶")
-        elif already_done:
-            self._set_status(f"{src.name}  [corrected] — click corners to re-correct, or press Next ▶")
+        cp = self._corrected_path(src)
+        if cp is not None and self.points:
+            self._set_status(f"{src.name}  [corrected: {cp.parent.name}] — adjust & re-apply, or press Next ▶")
+        elif cp is not None:
+            self._set_status(f"{src.name}  [corrected: {cp.parent.name}] — click corners to re-correct, or press Next ▶")
         elif self.points:
             self._set_status(f"{src.name} — points restored, drag to adjust or click Apply.")
         else:
@@ -199,7 +246,7 @@ class PerspectiveApp:
         if total == 0:
             self._nav_label.config(text="— / —")
             return
-        done = "✓" if self._output_path(self._image_list[self._current_idx]).exists() else " "
+        done = "✓" if self._is_corrected(self._image_list[self._current_idx]) else " "
         self._nav_label.config(text=f"{done} {self._current_idx + 1} / {total}")
 
     def go_prev(self) -> None:
@@ -221,7 +268,9 @@ class PerspectiveApp:
         cw = max(self.canvas.winfo_width(), 100)
         ch = max(self.canvas.winfo_height(), 100)
 
-        self.scale = min(cw / w, ch / h, 1.0)
+        usable_w = max(cw - 2 * CANVAS_BUFFER, 1)
+        usable_h = max(ch - 2 * CANVAS_BUFFER, 1)
+        self.scale = min(usable_w / w, usable_h / h, 1.0)
         new_w = max(int(w * self.scale), 1)
         new_h = max(int(h * self.scale), 1)
 
@@ -230,7 +279,7 @@ class PerspectiveApp:
         self.tk_image = ImageTk.PhotoImage(pil)
 
         self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.tk_image)
+        self.canvas.create_image(CANVAS_BUFFER, CANVAS_BUFFER, anchor=tk.NW, image=self.tk_image)
         self._redraw_points()
 
     def _render_corrected(self) -> None:
@@ -255,10 +304,9 @@ class PerspectiveApp:
         pil = Image.fromarray(rgb).resize((new_w, new_h), Image.LANCZOS)
         self.tk_corrected = ImageTk.PhotoImage(pil)
         self.canvas_right.create_image(0, 0, anchor=tk.NW, image=self.tk_corrected)
-
-        info = f"{w} × {h} px"
         self.canvas_right.create_text(
-            4, ch - 4, anchor=tk.SW, text=info,
+            4, ch - 4, anchor=tk.SW,
+            text=f"{w} × {h} px",
             fill="#aaaaaa", font=("Arial", 9),
         )
 
@@ -272,8 +320,8 @@ class PerspectiveApp:
     def _hit_test(self, cx: float, cy: float) -> int | None:
         best_idx, best_dist = None, float(HIT_RADIUS)
         for i, (ox, oy) in enumerate(self.points):
-            dx = ox * self.scale - cx
-            dy = oy * self.scale - cy
+            dx = ox * self.scale + CANVAS_BUFFER - cx
+            dy = oy * self.scale + CANVAS_BUFFER - cy
             dist = (dx * dx + dy * dy) ** 0.5
             if dist < best_dist:
                 best_dist = dist
@@ -290,7 +338,8 @@ class PerspectiveApp:
         if len(self.points) >= 4:
             self._set_status("Drag a point to reposition it, or Reset Points to start over.")
             return
-        self.points.append((event.x / self.scale, event.y / self.scale))
+        self.points.append(((event.x - CANVAS_BUFFER) / self.scale,
+                             (event.y - CANVAS_BUFFER) / self.scale))
         self._redraw_points()
         if len(self.points) == 4:
             self._set_status("4 points set — drag to adjust, or click Apply.")
@@ -300,9 +349,8 @@ class PerspectiveApp:
     def _on_drag(self, event: tk.Event) -> None:
         if self._drag_idx is None or self.original is None:
             return
-        h, w = self.original.shape[:2]
-        ox = max(0.0, min(event.x / self.scale, w - 1))
-        oy = max(0.0, min(event.y / self.scale, h - 1))
+        ox = (event.x - CANVAS_BUFFER) / self.scale
+        oy = (event.y - CANVAS_BUFFER) / self.scale
         self.points[self._drag_idx] = (ox, oy)
         self._redraw_points()
 
@@ -326,25 +374,21 @@ class PerspectiveApp:
         self.canvas.delete("overlay")
         if not self.points:
             return
+
+        def to_canvas(ox, oy):
+            return ox * self.scale + CANVAS_BUFFER, oy * self.scale + CANVAS_BUFFER
+
         if len(self.points) >= 2:
             for i in range(len(self.points) - 1):
-                x1, y1 = self.points[i]
-                x2, y2 = self.points[i + 1]
-                self.canvas.create_line(
-                    x1 * self.scale, y1 * self.scale,
-                    x2 * self.scale, y2 * self.scale,
-                    fill=LINE_COLOR, width=2, tags="overlay",
-                )
+                x1, y1 = to_canvas(*self.points[i])
+                x2, y2 = to_canvas(*self.points[i + 1])
+                self.canvas.create_line(x1, y1, x2, y2, fill=LINE_COLOR, width=2, tags="overlay")
         if len(self.points) == 4:
-            x1, y1 = self.points[-1]
-            x2, y2 = self.points[0]
-            self.canvas.create_line(
-                x1 * self.scale, y1 * self.scale,
-                x2 * self.scale, y2 * self.scale,
-                fill=LINE_COLOR, width=2, tags="overlay",
-            )
-        for i, (ox, oy) in enumerate(self.points, start=1):
-            cx, cy = ox * self.scale, oy * self.scale
+            x1, y1 = to_canvas(*self.points[-1])
+            x2, y2 = to_canvas(*self.points[0])
+            self.canvas.create_line(x1, y1, x2, y2, fill=LINE_COLOR, width=2, tags="overlay")
+        for i, pt in enumerate(self.points, start=1):
+            cx, cy = to_canvas(*pt)
             self.canvas.create_oval(
                 cx - POINT_RADIUS, cy - POINT_RADIUS,
                 cx + POINT_RADIUS, cy + POINT_RADIUS,
@@ -355,7 +399,53 @@ class PerspectiveApp:
                 fill=LABEL_COLOR, font=("Arial", 12, "bold"), tags="overlay",
             )
 
-    # ---------------------------------------------------------------- Apply --
+    # -------------------------------------------------------------- Apply ---
+
+    def _ask_label(self) -> str | None:
+        """Modal dialog to pick/type a label.
+
+        Returns the label string (possibly empty = no subdirectory) or None if
+        the user cancelled (which aborts the save).
+        """
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Choose Label")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text="Label  (leave blank for no category):").pack(
+            padx=16, pady=(14, 4), anchor="w"
+        )
+        combo = ttk.Combobox(dialog, values=self._labels, width=34)
+        combo.pack(padx=16, pady=(0, 10))
+        combo.focus_set()
+
+        result: list[str | None] = [None]
+
+        def on_ok(_event=None) -> None:
+            result[0] = combo.get().strip()
+            dialog.destroy()
+
+        def on_cancel(_event=None) -> None:
+            dialog.destroy()  # result stays None → caller aborts
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=(0, 14))
+        ttk.Button(btn_frame, text="OK",     command=on_ok,     width=10).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=6)
+
+        combo.bind("<Return>", on_ok)
+        dialog.bind("<Escape>", on_cancel)
+
+        # Centre over parent window.
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+        px = self.root.winfo_x() + (self.root.winfo_width()  - dialog.winfo_width())  // 2
+        py = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{px}+{py}")
+
+        dialog.wait_window()
+        return result[0]
 
     def apply_correction(self) -> None:
         if self.original is None:
@@ -375,8 +465,32 @@ class PerspectiveApp:
             messagebox.showerror("Transform failed", str(exc))
             return
 
+        label = self._ask_label()
+        if label is None:
+            return  # user cancelled — abort
+
         src = Path(self.image_path)
-        out = self._output_path(src)
+        rel_src = src.relative_to(BASE_DIR).as_posix()
+
+        # Delete the old corrected file (if any) before saving the new one.
+        old_rel_out = self._corrections.get(rel_src)
+        if old_rel_out is not None:
+            old_file = OUT_DIR / Path(old_rel_out)
+            if old_file.exists():
+                old_file.unlink()
+        else:
+            # Backward-compat: remove unlabeled file from before the label feature.
+            old_unlabeled = OUT_DIR / src.relative_to(BASE_DIR)
+            if old_unlabeled.exists():
+                old_unlabeled.unlink()
+
+        # Compute new output path: OUT_DIR/<person_dir>/<label>/<filename>
+        rel_src_path = src.relative_to(BASE_DIR)
+        if label:
+            rel_out = (rel_src_path.parent / label / rel_src_path.name).as_posix()
+        else:
+            rel_out = rel_src
+        out = OUT_DIR / Path(rel_out)
         out.parent.mkdir(parents=True, exist_ok=True)
 
         ext = out.suffix.lower() or ".png"
@@ -390,10 +504,19 @@ class PerspectiveApp:
             messagebox.showerror("Save failed", str(exc))
             return
 
+        # Persist label and correction mapping.
+        if label and label not in self._labels:
+            self._labels.append(label)
+            self._labels.sort()
+            self._save_labels()
+        self._corrections[rel_src] = rel_out
+        self._save_corrections()
+
         self.corrected = warped
         self._render_corrected()
         self._update_nav_label()
-        self._set_status(f"Saved → {out.relative_to(_HERE)}")
+        label_display = f"[{label}]" if label else "[no label]"
+        self._set_status(f"Saved {label_display} → {out.relative_to(_HERE)}")
 
     # ------------------------------------------------------------- Helpers --
 
