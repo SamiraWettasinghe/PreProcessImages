@@ -1,11 +1,30 @@
 {
-  "001_Aichele/Aichele_006_SD.png": "001_Aichele/Aichele_006_SD.png",
-  "001_Aichele/Aichele_009_K.png": "001_Aichele/Begrundung/Aichele_009_K.png",
-  "001_Aichele/Aichele_012_M.png": "001_Aichele/Meldebogen/Aichele_012_M.png",
-  "001_Aichele/Aichele_013_M.png": "001_Aichele/Aichele_013_M.png",
-  "001_Aichele/Aichele_017.png": "001_Aichele/Aichele_017.png",
-  "002_Alber/Alber_004_K.png": "002_Alber/Alber_004_K.png",
-  "002_Alber/Alber_005_K.png": "002_Alber/Alber_005_K.png",
-  "002_Alber/Alber_008_P.png": "002_Alber/Spruchkammer/Alber_008_P_Page1.png",
-  "002_Alber/Alber_009_P.png": "002_Alber/Spruchkammer/Alber_008_P_Page2.png"
+  "001_Aichele/Aichele_006_SD.png": [
+    "001_Aichele/Aichele_006_SD.png"
+  ],
+  "001_Aichele/Aichele_009_K.png": [
+    "001_Aichele/Begrundung/Aichele_009_K.png"
+  ],
+  "001_Aichele/Aichele_012_M.png": [
+    "001_Aichele/Meldebogen/Aichele_012_M.png"
+  ],
+  "001_Aichele/Aichele_013_M.png": [
+    "001_Aichele/Aichele_013_M.png"
+  ],
+  "001_Aichele/Aichele_017.png": [
+    "001_Aichele/Aichele_017.png"
+  ],
+  "002_Alber/Alber_004_K.png": [
+    "002_Alber/Alber_004_K.png"
+  ],
+  "002_Alber/Alber_005_K.png": [
+    "002_Alber/Alber_005_K.png"
+  ],
+  "002_Alber/Alber_008_P.png": [
+    "002_Alber/Spruchkammer/Alber_008_P_Page1.png"
+  ],
+  "002_Alber/Alber_009_P.png": [
+    "002_Alber/Alber_009_P.png",
+    "002_Alber/Alber_009_P_2.png"
+  ]
 }
