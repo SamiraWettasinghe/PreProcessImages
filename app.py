@@ -401,40 +401,62 @@ class PerspectiveApp:
 
     # -------------------------------------------------------------- Apply ---
 
-    def _ask_label(self) -> str | None:
-        """Modal dialog to pick/type a label.
+    def _filenames_for_folder(self, src: Path) -> list[str]:
+        """Return sorted output filenames already used for images in src's source folder."""
+        parent = src.relative_to(BASE_DIR).parent.as_posix()
+        names: set[str] = set()
+        for rel_src_key, rel_out_val in self._corrections.items():
+            if Path(rel_src_key).parent.as_posix() == parent:
+                names.add(Path(rel_out_val).name)
+        return sorted(names)
 
-        Returns the label string (possibly empty = no subdirectory) or None if
-        the user cancelled (which aborts the save).
+    def _ask_save_options(self, src: Path) -> tuple[str, str] | None:
+        """Modal dialog for label + filename.
+
+        Returns (label, filename) — label may be empty (no subdirectory) — or
+        None if the user cancelled (aborts the save).
+        Tab / Enter move between fields; Enter in filename submits.
         """
         dialog = tk.Toplevel(self.root)
-        dialog.title("Choose Label")
+        dialog.title("Save Options")
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
 
         ttk.Label(dialog, text="Label  (leave blank for no category):").pack(
-            padx=16, pady=(14, 4), anchor="w"
+            padx=16, pady=(14, 2), anchor="w"
         )
-        combo = ttk.Combobox(dialog, values=self._labels, width=34)
-        combo.pack(padx=16, pady=(0, 10))
-        combo.focus_set()
+        label_combo = ttk.Combobox(dialog, values=self._labels, width=36)
+        label_combo.pack(padx=16, pady=(0, 10))
+        label_combo.focus_set()
 
-        result: list[str | None] = [None]
+        ttk.Label(dialog, text="Filename:").pack(padx=16, pady=(0, 2), anchor="w")
+        name_combo = ttk.Combobox(dialog, values=self._filenames_for_folder(src), width=36)
+        name_combo.set(src.name)
+        name_combo.pack(padx=16, pady=(0, 10))
+
+        result: list[tuple[str, str] | None] = [None]
 
         def on_ok(_event=None) -> None:
-            result[0] = combo.get().strip()
+            label    = label_combo.get().strip()
+            filename = name_combo.get().strip() or src.name
+            # Preserve original extension if the user omitted it.
+            if not Path(filename).suffix:
+                filename += src.suffix
+            result[0] = (label, filename)
             dialog.destroy()
 
         def on_cancel(_event=None) -> None:
-            dialog.destroy()  # result stays None → caller aborts
+            dialog.destroy()
 
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=(0, 14))
         ttk.Button(btn_frame, text="OK",     command=on_ok,     width=10).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=6)
 
-        combo.bind("<Return>", on_ok)
+        # Enter in label field moves to filename; Enter in filename submits.
+        label_combo.bind("<Return>", lambda _e: name_combo.focus_set())
+        name_combo.bind("<Return>", on_ok)
         dialog.bind("<Escape>", on_cancel)
 
         # Centre over parent window.
@@ -465,11 +487,12 @@ class PerspectiveApp:
             messagebox.showerror("Transform failed", str(exc))
             return
 
-        label = self._ask_label()
-        if label is None:
-            return  # user cancelled — abort
-
         src = Path(self.image_path)
+        options = self._ask_save_options(src)
+        if options is None:
+            return  # user cancelled — abort
+        label, filename = options
+
         rel_src = src.relative_to(BASE_DIR).as_posix()
 
         # Delete the old corrected file (if any) before saving the new one.
@@ -487,9 +510,9 @@ class PerspectiveApp:
         # Compute new output path: OUT_DIR/<person_dir>/<label>/<filename>
         rel_src_path = src.relative_to(BASE_DIR)
         if label:
-            rel_out = (rel_src_path.parent / label / rel_src_path.name).as_posix()
+            rel_out = (rel_src_path.parent / label / filename).as_posix()
         else:
-            rel_out = rel_src
+            rel_out = (rel_src_path.parent / filename).as_posix()
         out = OUT_DIR / Path(rel_out)
         out.parent.mkdir(parents=True, exist_ok=True)
 
