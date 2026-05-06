@@ -7,7 +7,7 @@ from app import PerspectiveApp
 
 def main() -> None:
     root = tk.Tk()
-    root.geometry("1200x820")
+    root.geometry("1600x860")
     PerspectiveApp(root)
     root.mainloop()
 
