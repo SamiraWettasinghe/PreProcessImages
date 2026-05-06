@@ -20,6 +20,9 @@ POINT_OUTLINE = "#ffffff"
 LABEL_COLOR   = "#ffeb3b"
 HIT_RADIUS    = 14
 CANVAS_BUFFER = 150
+ZOOM_STEP     = 1.25   # factor per scroll tick
+ZOOM_MIN      = 0.25
+ZOOM_MAX      = 20.0
 
 # One colour per box (cycles if more than 6 boxes).
 BOX_COLORS = ["#22ff88", "#ff9922", "#22aaff", "#ff44cc", "#ffff44", "#aa44ff"]
@@ -34,30 +37,36 @@ CORRECTIONS_FILE = _HERE / "corrections.json"
 
 
 class PerspectiveApp:
-    """Main application window.
-
-    Workflow:
-        1. App loads all images from Akten_selektiert/ on startup.
-        2. Click corners to build one or more 4-point boxes; drag to adjust.
-           Each group of 4 consecutive points forms one box.
-        3. Click Apply — a dialog shows one Label + Filename row per box.
-           Each box is saved as a separate rectified image.
-        4. Prev / Next (or ← →) navigate the image list; points are remembered.
-    """
+    """Main application window."""
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Perspective Correction Tool")
 
-        # Left-pane state
+        # Left-pane image state
         self.image_path: str | None = None
         self.original: np.ndarray | None = None
         self.tk_image: ImageTk.PhotoImage | None = None
-        self.scale: float = 1.0
-        self.points: list[tuple[float, float]] = []   # flat; groups of 4 = boxes
+
+        # Coordinate transform state
+        # Effective scale = _base_scale * _zoom
+        # Image top-left in canvas: (CANVAS_BUFFER + pan_x, CANVAS_BUFFER + pan_y)
+        self._base_scale: float = 1.0   # computed to fit image in canvas
+        self._zoom: float = 1.0         # user-controlled multiplier
+        self.scale: float = 1.0         # = _base_scale * _zoom  (used everywhere)
+        self.pan_x: float = 0.0
+        self.pan_y: float = 0.0
+
+        # Pan gesture state
+        self._panning: bool = False
+        self._pan_start: tuple[int, int] = (0, 0)
+        self._pan_start_offset: tuple[float, float] = (0.0, 0.0)
+
+        # Points / boxes
+        self.points: list[tuple[float, float]] = []
         self._drag_idx: int | None = None
 
-        # Right-pane state (all corrected boxes, tiled side-by-side)
+        # Right-pane state
         self.corrected: list[np.ndarray] = []
         self.tk_corrected: ImageTk.PhotoImage | None = None
 
@@ -68,10 +77,10 @@ class PerspectiveApp:
 
         # Persistent data
         self._labels: list[str] = []
-        # corrections: rel_src (posix) → list[rel_out (posix, within OUT_DIR)]
         self._corrections: dict[str, list[str]] = {}
 
         self._resize_job: str | None = None
+        self._zoom_job:   str | None = None
         self._load_labels()
         self._load_corrections()
         self._build_ui()
@@ -92,6 +101,10 @@ class PerspectiveApp:
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(toolbar, text="Reset Points", command=self.reset_points).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Apply",        command=self.apply_correction).pack(side=tk.LEFT, padx=2)
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(toolbar, text="−",   width=2, command=self.zoom_out).pack(side=tk.LEFT, padx=1)
+        ttk.Button(toolbar, text="Fit", width=3, command=self.zoom_fit).pack(side=tk.LEFT, padx=1)
+        ttk.Button(toolbar, text="+",   width=2, command=self.zoom_in).pack(side=tk.LEFT, padx=1)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
 
         self._nav_label = ttk.Label(toolbar, text="— / —", width=14)
@@ -120,15 +133,30 @@ class PerspectiveApp:
                                       highlightthickness=0)
         self.canvas_right.pack(fill=tk.BOTH, expand=True)
 
+        # Left-canvas bindings
         self.canvas.bind("<Button-1>",        self._on_click)
         self.canvas.bind("<B1-Motion>",       self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Motion>",          self._on_hover)
 
+        # Pan: middle-click drag
+        self.canvas.bind("<Button-2>",        self._on_pan_start)
+        self.canvas.bind("<B2-Motion>",       self._on_pan_drag)
+        self.canvas.bind("<ButtonRelease-2>", self._on_pan_end)
+
+        # Zoom: mouse wheel (cross-platform)
+        self.canvas.bind("<MouseWheel>", self._on_mousewheel)   # Windows / macOS
+        self.canvas.bind("<Button-4>",   self._on_mousewheel)   # Linux scroll up
+        self.canvas.bind("<Button-5>",   self._on_mousewheel)   # Linux scroll down
+
         self.root.bind("<Control-r>", lambda _e: self.reset_points())
         self.root.bind("<Return>",    lambda _e: self.apply_correction())
         self.root.bind("<Left>",      lambda _e: self.go_prev())
         self.root.bind("<Right>",     lambda _e: self.go_next())
+        self.root.bind("<equal>",     lambda _e: self.zoom_in())   # = / +
+        self.root.bind("<plus>",      lambda _e: self.zoom_in())
+        self.root.bind("<minus>",     lambda _e: self.zoom_out())
+        self.root.bind("<KeyPress-0>", lambda _e: self.zoom_fit())
 
     # -------------------------------------------------- Persistent storage --
 
@@ -146,7 +174,6 @@ class PerspectiveApp:
     def _load_corrections(self) -> None:
         try:
             raw = json.loads(CORRECTIONS_FILE.read_text(encoding="utf-8"))
-            # Migrate old format where values were plain strings.
             self._corrections = {
                 k: ([v] if isinstance(v, str) else v)
                 for k, v in raw.items()
@@ -172,11 +199,9 @@ class PerspectiveApp:
         self._update_nav_label()
 
     def _corrected_paths(self, src: Path) -> list[Path]:
-        """Return existing corrected file paths for src (may be empty)."""
         rel_src = src.relative_to(BASE_DIR).as_posix()
         rel_outs = self._corrections.get(rel_src)
         if rel_outs is None:
-            # Backward-compat: unlabeled location from before this feature.
             p = OUT_DIR / src.relative_to(BASE_DIR)
             return [p] if p.exists() else []
         return [OUT_DIR / Path(r) for r in rel_outs if (OUT_DIR / Path(r)).exists()]
@@ -210,7 +235,11 @@ class PerspectiveApp:
         self.points = list(self._saved_points.get(str(src), []))
         self._drag_idx = None
 
-        # Load all corrected boxes for the right pane.
+        # Reset zoom and pan for each new image.
+        self._zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+
         self.corrected = []
         for cp in self._corrected_paths(src):
             try:
@@ -232,12 +261,12 @@ class PerspectiveApp:
         if n_done and self.points:
             self._set_status(
                 f"{src.name}  [{n_done} box{'es' if n_done > 1 else ''} corrected]"
-                f" — adjust & re-apply, or Next ▶"
+                " — adjust & re-apply, or Next ▶"
             )
         elif n_done:
             self._set_status(
                 f"{src.name}  [{n_done} box{'es' if n_done > 1 else ''} corrected]"
-                f" — place corners to re-correct, or Next ▶"
+                " — place corners to re-correct, or Next ▶"
             )
         elif n_boxes:
             self._set_status(f"{src.name} — {n_boxes} box(es) restored, adjust or Apply.")
@@ -258,6 +287,66 @@ class PerspectiveApp:
     def go_next(self) -> None:
         self._go_to(self._current_idx + 1)
 
+    # ---------------------------------------------------------------- Zoom --
+
+    def _apply_zoom(self, factor: float, cx: float | None = None, cy: float | None = None) -> None:
+        """Update zoom state immediately; debounce the actual render to avoid rapid redraws."""
+        new_zoom = max(ZOOM_MIN, min(self._zoom * factor, ZOOM_MAX))
+        actual = new_zoom / self._zoom
+        if cx is not None and cy is not None:
+            self.pan_x = (cx - CANVAS_BUFFER) * (1 - actual) + self.pan_x * actual
+            self.pan_y = (cy - CANVAS_BUFFER) * (1 - actual) + self.pan_y * actual
+        self._zoom = new_zoom
+        self.scale = self._base_scale * self._zoom
+        if self._zoom_job is not None:
+            self.root.after_cancel(self._zoom_job)
+        self._zoom_job = self.root.after(100, self._render_image)
+
+    def zoom_in(self) -> None:
+        self._apply_zoom(ZOOM_STEP)
+
+    def zoom_out(self) -> None:
+        self._apply_zoom(1 / ZOOM_STEP)
+
+    def zoom_fit(self) -> None:
+        if self._zoom_job is not None:
+            self.root.after_cancel(self._zoom_job)
+            self._zoom_job = None
+        self._zoom = 1.0
+        self.pan_x = 0.0
+        self.pan_y = 0.0
+        self.scale = self._base_scale
+        self._render_image()
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        if event.num == 4 or getattr(event, "delta", 0) > 0:
+            self._apply_zoom(ZOOM_STEP, event.x, event.y)
+        else:
+            self._apply_zoom(1 / ZOOM_STEP, event.x, event.y)
+
+    # ----------------------------------------------------------------- Pan --
+
+    def _on_pan_start(self, event: tk.Event) -> None:
+        self._panning = True
+        self._pan_start = (event.x, event.y)
+        self._pan_start_offset = (self.pan_x, self.pan_y)
+        self.canvas.config(cursor="fleur")
+
+    def _on_pan_drag(self, event: tk.Event) -> None:
+        if not self._panning:
+            return
+        self.pan_x = self._pan_start_offset[0] + event.x - self._pan_start[0]
+        self.pan_y = self._pan_start_offset[1] + event.y - self._pan_start[1]
+        # Move the existing canvas item directly — no image re-encoding, no allocations.
+        if self.canvas.find_withtag("img"):
+            self.canvas.coords("img", CANVAS_BUFFER + self.pan_x, CANVAS_BUFFER + self.pan_y)
+        self._redraw_points()
+
+    def _on_pan_end(self, event: tk.Event) -> None:
+        self._panning = False
+        cursor = "fleur" if self._hit_test(event.x, event.y) is not None else "crosshair"
+        self.canvas.config(cursor=cursor)
+
     # --------------------------------------------------------------- Render --
 
     def _render_both(self) -> None:
@@ -265,25 +354,37 @@ class PerspectiveApp:
         self._render_corrected()
 
     def _render_image(self) -> None:
+        self._zoom_job = None
         if self.original is None:
             return
-        h, w = self.original.shape[:2]
-        cw = max(self.canvas.winfo_width(), 100)
-        ch = max(self.canvas.winfo_height(), 100)
+        try:
+            h, w = self.original.shape[:2]
+            cw = self.canvas.winfo_width()
+            ch = self.canvas.winfo_height()
+            if cw < 10 or ch < 10:   # canvas not yet laid out
+                return
 
-        usable_w = max(cw - 2 * CANVAS_BUFFER, 1)
-        usable_h = max(ch - 2 * CANVAS_BUFFER, 1)
-        self.scale = min(usable_w / w, usable_h / h, 1.0)
-        new_w = max(int(w * self.scale), 1)
-        new_h = max(int(h * self.scale), 1)
+            usable_w = max(cw - 2 * CANVAS_BUFFER, 1)
+            usable_h = max(ch - 2 * CANVAS_BUFFER, 1)
+            self._base_scale = min(usable_w / w, usable_h / h, 1.0)
+            self.scale = self._base_scale * self._zoom
 
-        rgb = cv2.cvtColor(self.original, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(rgb).resize((new_w, new_h), Image.LANCZOS)
-        self.tk_image = ImageTk.PhotoImage(pil)
+            new_w = max(int(w * self.scale), 1)
+            new_h = max(int(h * self.scale), 1)
 
-        self.canvas.delete("all")
-        self.canvas.create_image(CANVAS_BUFFER, CANVAS_BUFFER, anchor=tk.NW, image=self.tk_image)
-        self._redraw_points()
+            rgb = cv2.cvtColor(self.original, cv2.COLOR_BGR2RGB)
+            pil = Image.fromarray(rgb).resize((new_w, new_h), Image.LANCZOS)
+            new_image = ImageTk.PhotoImage(pil)
+
+            self.canvas.delete("all")
+            self.tk_image = new_image   # assign after delete so old ref lives until now
+            self.canvas.create_image(
+                CANVAS_BUFFER + self.pan_x, CANVAS_BUFFER + self.pan_y,
+                anchor=tk.NW, image=self.tk_image, tags="img",
+            )
+            self._redraw_points()
+        except Exception:
+            pass
 
     def _render_corrected(self) -> None:
         self.canvas_right.delete("all")
@@ -298,37 +399,30 @@ class PerspectiveApp:
             return
 
         n = len(self.corrected)
-        gap = 4  # px between tiled boxes
+        gap = 4
         slot_w = max((cw - gap * (n - 1)) // n, 1)
 
-        # Scale each box to fit its slot, keeping aspect ratio.
         pil_images: list[Image.Image] = []
         for img in self.corrected:
-            h, w = img.shape[:2]
-            scale = min(slot_w / w, ch / h, 1.0)
-            new_w = max(int(w * scale), 1)
-            new_h = max(int(h * scale), 1)
+            ih, iw = img.shape[:2]
+            s = min(slot_w / iw, ch / ih, 1.0)
+            new_w = max(int(iw * s), 1)
+            new_h = max(int(ih * s), 1)
             rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
             pil_images.append(Image.fromarray(rgb).resize((new_w, new_h), Image.LANCZOS))
 
-        # Composite into one image so we only need one PhotoImage reference.
         total_w = sum(p.width for p in pil_images) + gap * (n - 1)
         max_h   = max(p.height for p in pil_images)
-        composite = Image.new("RGB", (total_w, max_h), (32, 34, 37))  # matches #202225
+        composite = Image.new("RGB", (total_w, max_h), (32, 34, 37))
         x = 0
         for pil in pil_images:
-            # Centre each box vertically within the composite.
-            y_off = (max_h - pil.height) // 2
-            composite.paste(pil, (x, y_off))
+            composite.paste(pil, (x, (max_h - pil.height) // 2))
             x += pil.width + gap
 
         self.tk_corrected = ImageTk.PhotoImage(composite)
         self.canvas_right.create_image(0, 0, anchor=tk.NW, image=self.tk_corrected)
 
-        # Pixel-size info for each box along the bottom.
-        info = "  |  ".join(
-            f"{img.shape[1]} × {img.shape[0]} px" for img in self.corrected
-        )
+        info = "  |  ".join(f"{img.shape[1]} × {img.shape[0]} px" for img in self.corrected)
         self.canvas_right.create_text(
             4, ch - 4, anchor=tk.SW, text=info, fill="#aaaaaa", font=("Arial", 9),
         )
@@ -341,18 +435,24 @@ class PerspectiveApp:
     # ------------------------------------------------------- Point handling --
 
     def _boxes(self) -> list[list[tuple[float, float]]]:
-        """Split flat point list into groups of 4."""
         return [self.points[i:i + 4] for i in range(0, len(self.points), 4)]
 
     def _complete_boxes(self) -> list[list[tuple[float, float]]]:
         return [b for b in self._boxes() if len(b) == 4]
 
+    def _to_canvas(self, ox: float, oy: float) -> tuple[float, float]:
+        return (ox * self.scale + CANVAS_BUFFER + self.pan_x,
+                oy * self.scale + CANVAS_BUFFER + self.pan_y)
+
+    def _to_image(self, cx: float, cy: float) -> tuple[float, float]:
+        return ((cx - CANVAS_BUFFER - self.pan_x) / self.scale,
+                (cy - CANVAS_BUFFER - self.pan_y) / self.scale)
+
     def _hit_test(self, cx: float, cy: float) -> int | None:
         best_idx, best_dist = None, float(HIT_RADIUS)
         for i, (ox, oy) in enumerate(self.points):
-            dx = ox * self.scale + CANVAS_BUFFER - cx
-            dy = oy * self.scale + CANVAS_BUFFER - cy
-            dist = (dx * dx + dy * dy) ** 0.5
+            px, py = self._to_canvas(ox, oy)
+            dist = ((px - cx) ** 2 + (py - cy) ** 2) ** 0.5
             if dist < best_dist:
                 best_dist = dist
                 best_idx = i
@@ -365,8 +465,8 @@ class PerspectiveApp:
         if hit is not None:
             self._drag_idx = hit
             return
-        self.points.append(((event.x - CANVAS_BUFFER) / self.scale,
-                             (event.y - CANVAS_BUFFER) / self.scale))
+        ox, oy = self._to_image(event.x, event.y)
+        self.points.append((ox, oy))
         self._redraw_points()
         n = len(self.points)
         remainder = n % 4
@@ -381,8 +481,7 @@ class PerspectiveApp:
     def _on_drag(self, event: tk.Event) -> None:
         if self._drag_idx is None or self.original is None:
             return
-        ox = (event.x - CANVAS_BUFFER) / self.scale
-        oy = (event.y - CANVAS_BUFFER) / self.scale
+        ox, oy = self._to_image(event.x, event.y)
         self.points[self._drag_idx] = (ox, oy)
         self._redraw_points()
 
@@ -397,6 +496,8 @@ class PerspectiveApp:
                 )
 
     def _on_hover(self, event: tk.Event) -> None:
+        if self._panning:
+            return
         cursor = "fleur" if self._hit_test(event.x, event.y) is not None else "crosshair"
         self.canvas.config(cursor=cursor)
 
@@ -410,24 +511,17 @@ class PerspectiveApp:
         self.canvas.delete("overlay")
         if not self.points:
             return
-
-        def to_canvas(ox: float, oy: float) -> tuple[float, float]:
-            return ox * self.scale + CANVAS_BUFFER, oy * self.scale + CANVAS_BUFFER
-
         for box_idx, box in enumerate(self._boxes()):
             color = BOX_COLORS[box_idx % len(BOX_COLORS)]
-            pts_c = [to_canvas(*p) for p in box]
+            pts_c = [self._to_canvas(*p) for p in box]
 
-            # Edges between consecutive points.
             for i in range(len(pts_c) - 1):
                 self.canvas.create_line(*pts_c[i], *pts_c[i + 1],
                                         fill=color, width=2, tags="overlay")
-            # Close the polygon once all 4 points are placed.
             if len(pts_c) == 4:
                 self.canvas.create_line(*pts_c[-1], *pts_c[0],
                                         fill=color, width=2, tags="overlay")
 
-            # Numbered handles — label as "<box>.<point>" e.g. "2.3".
             for pt_idx, (cx, cy) in enumerate(pts_c, start=1):
                 self.canvas.create_oval(
                     cx - POINT_RADIUS, cy - POINT_RADIUS,
@@ -442,7 +536,6 @@ class PerspectiveApp:
     # -------------------------------------------------------------- Apply ---
 
     def _filenames_for_folder(self, src: Path) -> list[str]:
-        """Sorted output filenames already used for images in src's source folder."""
         parent = src.relative_to(BASE_DIR).parent.as_posix()
         names: set[str] = set()
         for rel_src_key, rel_out_list in self._corrections.items():
@@ -452,10 +545,6 @@ class PerspectiveApp:
         return sorted(names)
 
     def _ask_save_options(self, src: Path, n_boxes: int) -> list[tuple[str, str]] | None:
-        """Modal dialog with one Label + Filename row per box.
-
-        Returns list of (label, filename) — one entry per box — or None if cancelled.
-        """
         dialog = tk.Toplevel(self.root)
         dialog.title("Save Options")
         dialog.resizable(False, False)
@@ -477,7 +566,6 @@ class PerspectiveApp:
             ttk.Label(dialog, text=header, font=("Arial", 9, "bold")).pack(
                 padx=16, pady=(10, 2), anchor="w"
             )
-
             ttk.Label(dialog, text="  Label  (blank = no sub-folder):").pack(
                 padx=16, pady=(0, 2), anchor="w"
             )
@@ -517,7 +605,6 @@ class PerspectiveApp:
         ttk.Button(btn_frame, text="OK",     command=on_ok,     width=10).pack(side=tk.LEFT, padx=6)
         ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=6)
 
-        # Enter advances through fields; Enter on the last field submits.
         all_combos = [c for pair in zip(label_combos, name_combos) for c in pair]
         for combo, nxt in zip(all_combos[:-1], all_combos[1:]):
             combo.bind("<Return>", lambda _e, n=nxt: n.focus_set())
@@ -548,7 +635,6 @@ class PerspectiveApp:
             )
             return
 
-        # Warp all boxes up-front so we fail before showing the dialog.
         warped_list: list[np.ndarray] = []
         for box in self._complete_boxes():
             pts = np.array(box, dtype="float32")
@@ -561,16 +647,14 @@ class PerspectiveApp:
         src = Path(self.image_path)
         options = self._ask_save_options(src, len(warped_list))
         if options is None:
-            return  # cancelled
+            return
 
         rel_src = src.relative_to(BASE_DIR).as_posix()
 
-        # Delete all previously saved files for this source.
         for old_rel in self._corrections.get(rel_src, []):
             old_file = OUT_DIR / Path(old_rel)
             if old_file.exists():
                 old_file.unlink()
-        # Backward-compat: unlabeled file saved before the label feature.
         if rel_src not in self._corrections:
             old_unlabeled = OUT_DIR / src.relative_to(BASE_DIR)
             if old_unlabeled.exists():
@@ -607,14 +691,11 @@ class PerspectiveApp:
         self._corrections[rel_src] = new_rel_outs
         self._save_corrections()
 
-        # Show all corrected boxes in right pane.
         self.corrected = warped_list
         self._render_corrected()
         self._update_nav_label()
         b = len(warped_list)
-        self._set_status(
-            f"Saved {b} box{'es' if b > 1 else ''} for {src.name}"
-        )
+        self._set_status(f"Saved {b} box{'es' if b > 1 else ''} for {src.name}")
 
     # ------------------------------------------------------------- Helpers --
 

@@ -1,4 +1,7 @@
-Akten_selektiert
+*Akten_selektiert*
 *.png*
 *__pycache__*
 venv
+corrections.json
+labels.json
+*.claude*
