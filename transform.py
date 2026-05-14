@@ -9,25 +9,16 @@ import cv2
 def order_points(pts: np.ndarray) -> np.ndarray:
     """Order 4 points as [top-left, top-right, bottom-right, bottom-left].
 
-    Uses the classic sum/diff trick:
-      - top-left has the smallest x+y
-      - bottom-right has the largest x+y
-      - top-right has the smallest y-x  (smallest "diff" in numpy's sense)
-      - bottom-left has the largest y-x
-    This means the user does not have to click the corners in any particular
-    order — we sort them automatically.
+    Uses the angle each point makes with the centroid (image coords, y down).
+    Sorting those angles ascending yields a stable TL→TR→BR→BL clockwise
+    order for any box orientation, including extreme angles like 45° where
+    the classic x+y / y-x heuristic assigns the same point to two roles and
+    produces a degenerate (blank) warp result.
     """
     pts = np.asarray(pts, dtype="float32").reshape(4, 2)
-    rect = np.zeros((4, 2), dtype="float32")
-
-    s = pts.sum(axis=1)
-    rect[0] = pts[np.argmin(s)]
-    rect[2] = pts[np.argmax(s)]
-
-    diff = np.diff(pts, axis=1).ravel()  # y - x
-    rect[1] = pts[np.argmin(diff)]
-    rect[3] = pts[np.argmax(diff)]
-    return rect
+    center = pts.mean(axis=0)
+    angles = np.arctan2(pts[:, 1] - center[1], pts[:, 0] - center[0])
+    return pts[np.argsort(angles)]
 
 
 def four_point_transform(image: np.ndarray, pts: np.ndarray) -> np.ndarray:
