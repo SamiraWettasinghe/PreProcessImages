@@ -34,6 +34,7 @@ OUT_DIR          = _HERE / "Akten_selektiert_corrected"
 LABELS_FILE      = _HERE / "labels.json"
 CORRECTIONS_FILE = _HERE / "corrections.json"
 PREPROCESS_FILE  = _HERE / "preprocess_settings.json"
+BOXES_FILE       = _HERE / "boxes.json"
 
 
 class _Tooltip:
@@ -139,6 +140,7 @@ class PerspectiveApp:
 
         self._load_labels()
         self._load_corrections()
+        self._load_boxes()
         self._load_preprocess_settings()
         self._build_ui()
         self.root.bind("<Configure>", self._on_window_resize)
@@ -433,6 +435,21 @@ class PerspectiveApp:
             json.dumps(self._corrections, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def _load_boxes(self) -> None:
+        try:
+            raw = json.loads(BOXES_FILE.read_text(encoding="utf-8"))
+            self._saved_points = {k: [tuple(p) for p in v] for k, v in raw.items()}
+        except Exception:
+            self._saved_points = {}
+
+    def _save_boxes(self) -> None:
+        try:
+            BOXES_FILE.write_text(
+                json.dumps(self._saved_points, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
     def _load_preprocess_settings(self) -> None:
         try:
             d = json.loads(PREPROCESS_FILE.read_text(encoding="utf-8"))
@@ -481,6 +498,9 @@ class PerspectiveApp:
             pass
 
     def _on_close(self) -> None:
+        if self.image_path is not None:
+            self._saved_points[self.image_path] = list(self.points)
+        self._save_boxes()
         self._save_preprocess_settings()
         self.root.destroy()
 
@@ -514,6 +534,7 @@ class PerspectiveApp:
             return
         if self.image_path is not None:
             self._saved_points[self.image_path] = list(self.points)
+            self._save_boxes()
 
         self._current_idx = max(0, min(idx, len(self._image_list) - 1))
         src = self._image_list[self._current_idx]
