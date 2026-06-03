@@ -6,3 +6,4 @@ corrections.json
 labels.json
 *.claude*
 preprocess_settings.json
+boxes.json

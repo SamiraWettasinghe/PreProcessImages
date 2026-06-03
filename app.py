@@ -102,6 +102,7 @@ class PerspectiveApp:
 
         self.points: list[tuple[float, float]] = []
         self._drag_idx: int | None = None
+        self._menu_open: bool = False
 
         self.corrected: list[np.ndarray] = []
         self.tk_corrected: ImageTk.PhotoImage | None = None
@@ -227,6 +228,8 @@ class PerspectiveApp:
         self.canvas.bind("<B1-Motion>",       self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<Motion>",          self._on_hover)
+
+        self.canvas.bind("<Button-3>",        self._on_right_click)
 
         self.canvas.bind("<Button-2>",        self._on_pan_start)
         self.canvas.bind("<B2-Motion>",       self._on_pan_drag)
@@ -800,6 +803,11 @@ class PerspectiveApp:
     def _on_click(self, event: tk.Event) -> None:
         if self.original is None:
             return
+        # A click that closes the right-click menu should only dismiss it,
+        # not place a new point.
+        if self._menu_open:
+            self._menu_open = False
+            return
         hit = self._hit_test(event.x, event.y)
         if hit is not None:
             self._drag_idx = hit
@@ -839,6 +847,67 @@ class PerspectiveApp:
             return
         cursor = "fleur" if self._hit_test(event.x, event.y) is not None else "crosshair"
         self.canvas.config(cursor=cursor)
+
+    def _on_right_click(self, event: tk.Event) -> None:
+        if self.original is None:
+            return
+        idx = self._hit_test(event.x, event.y)
+        if idx is None:
+            return
+
+        box_idx = idx // 4
+        pt_in_box = idx % 4
+
+        menu = tk.Menu(self.canvas, tearoff=0)
+        menu.add_command(
+            label=f"Delete point {box_idx + 1}.{pt_in_box + 1}",
+            command=lambda i=idx: self._delete_point(i),
+        )
+        menu.add_command(
+            label=f"Delete box {box_idx + 1}",
+            command=lambda b=box_idx: self._delete_box(b),
+        )
+        # Track open state so the click that dismisses the menu doesn't also
+        # fall through to _on_click and create a stray point.
+        self._menu_open = True
+        menu.bind("<Unmap>", lambda _e: self.canvas.after_idle(
+            lambda: setattr(self, "_menu_open", False)))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _delete_point(self, idx: int) -> None:
+        if not (0 <= idx < len(self.points)):
+            return
+        del self.points[idx]
+        self._drag_idx = None
+        self._redraw_points()
+        n = len(self.points)
+        rem = n % 4
+        if n == 0:
+            self._set_status("Click 4 corners to start a box.")
+        elif rem:
+            self._set_status(
+                f"Point deleted — {rem}/4 placed in the last box; click to add the rest."
+            )
+        else:
+            self._set_status("Point deleted.")
+
+    def _delete_box(self, box_idx: int) -> None:
+        start = box_idx * 4
+        if start >= len(self.points):
+            return
+        del self.points[start:start + 4]
+        self._drag_idx = None
+        self._redraw_points()
+        n_boxes = len(self.points) // 4
+        if not self.points:
+            self._set_status("Box deleted — click 4 corners to start a box.")
+        else:
+            self._set_status(
+                f"Box deleted — {n_boxes} box{'es' if n_boxes != 1 else ''} remaining."
+            )
 
     def reset_points(self) -> None:
         self.points.clear()
