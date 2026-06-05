@@ -36,6 +36,358 @@ CORRECTIONS_FILE = _HERE / "corrections.json"
 PREPROCESS_FILE  = _HERE / "preprocess_settings.json"
 BOXES_FILE       = _HERE / "boxes.json"
 
+# Threshold combobox: stable internal keys (used by the pipeline) decoupled
+# from their per-language display labels (see TRANSLATIONS["thresh_values"]).
+THRESH_INTERNAL = ["None", "Otsu", "Adaptive"]
+
+TRANSLATIONS: dict[str, dict[str, object]] = {
+    "en": {
+        # ---- window / toolbar ----
+        "window_title":          "Perspective Correction Tool",
+        "btn_prev":              "◀ Prev",
+        "btn_next":              "Next ▶",
+        "btn_reset":             "Reset Points",
+        "btn_apply":             "Apply",
+        "btn_delete_correction": "Delete Correction",
+        "btn_fit":               "Fit",
+        "btn_preprocess":        "Preprocess",
+        "btn_save_preproc":      "Save Preproc",
+        "pane_original":         "Original",
+        "pane_corrected":        "Corrected",
+        "no_correction_yet":     "No correction yet",
+        "total_dash":            "/ —",
+        "total_count":           "/ {total}",
+        "status_loading":        "Loading…",
+        # ---- preprocessing panel ----
+        "pp_title":     "Preprocessing Parameters",
+        "pp_denoise":   "Denoise",
+        "pp_clahe":     "CLAHE",
+        "pp_threshold": "Threshold:",
+        "pp_block":     "Block:",
+        "pp_c":         "C:",
+        "pp_morph":     "Morphology",
+        "pp_kernel":    "Kernel:",
+        "pp_upscale":   "Upscale",
+        "pp_factor":    "Factor:",
+        "pp_h":         "h:",
+        "pp_clip":      "Clip:",
+        "pp_grid":      "Grid:",
+        "thresh_values": ["None", "Otsu", "Adaptive"],
+        # ---- tooltips ----
+        "tt_denoise": "Removes scanner grain and paper speckle.\n\n"
+                      "Enable this if your scan looks 'noisy' or has a rough texture. "
+                      "Safe to leave on for most documents — it runs before everything else.\n\n"
+                      "Default: on",
+        "tt_h": "Denoising strength.\n\n"
+                "Higher = more aggressive removal, but very high values can soften "
+                "fine pen strokes or thin typewriter characters.\n\n"
+                "Raise to 20–30 only if grain is still clearly visible in the preview.\n\n"
+                "Default: 10",
+        "tt_clahe": "Evens out uneven lighting across the page.\n\n"
+                    "Useful for yellowed paper, folds, or scans where one corner looks "
+                    "darker than another. Works by boosting contrast in small local "
+                    "regions rather than the page as a whole.\n\n"
+                    "Default: on",
+        "tt_clip": "Contrast boost strength.\n\n"
+                   "Higher = darker areas get a stronger lift, but values above 4 "
+                   "can create bright halos around dark ink.\n\n"
+                   "Default: 2.0",
+        "tt_grid": "Tile size for local contrast adjustment.\n\n"
+                   "The page is divided into a grid and each tile is adjusted "
+                   "independently. Smaller grid = finer adjustments, but can look "
+                   "patchy on very uniform pages.\n\n"
+                   "Try 4 for pages with heavy uneven staining.\n\n"
+                   "Default: 8",
+        "tt_threshold": "Converts the image to pure black-and-white, which makes text sharper "
+                        "and more readable for OCR.\n\n"
+                        "• None – keep as greyscale (no conversion)\n"
+                        "• Otsu – good for clean, evenly-lit typewritten pages; finds one "
+                        "global cutoff between ink and paper\n"
+                        "• Adaptive – best for handwriting or mixed pages; decides black vs "
+                        "white separately for each small patch, handling uneven ink and lighting\n\n"
+                        "Default: Adaptive",
+        "tt_block": "Adaptive threshold only — patch size in pixels.\n\n"
+                    "Each pixel looks at its neighbours within this square to decide "
+                    "whether it should be black or white.\n\n"
+                    "Too small (e.g. 11) → text can look patchy or broken.\n"
+                    "Too large (e.g. 101) → background grey bleeds into text.\n\n"
+                    "Increase if you see blotchy patches; decrease if thin strokes "
+                    "are disappearing.\n\n"
+                    "Default: 31",
+        "tt_c": "Adaptive threshold only — darkness bias.\n\n"
+                "Shifts the black/white boundary within each patch:\n"
+                "• Raise it if the background is coming out grey\n"
+                "• Lower it if ink strokes are turning white and disappearing\n\n"
+                "Default: 10",
+        "tt_morph": "Fills tiny gaps and breaks in letter strokes.\n\n"
+                    "Most useful for handwriting where the pen lifted mid-letter, leaving "
+                    "small disconnected pieces. Leave off for clean typewritten documents "
+                    "— it can merge letters that are close together.\n\n"
+                    "Default: off",
+        "tt_kernel": "Gap-filling brush size in pixels.\n\n"
+                     "1–2 closes hairline breaks without affecting letter shape.\n"
+                     "3+ fills larger gaps but risks merging nearby letters or "
+                     "thickening thin strokes noticeably.\n\n"
+                     "Default: 2",
+        "tt_upscale": "Enlarges the image before OCR.\n\n"
+                      "Most OCR engines need at least 300 DPI to read text reliably. "
+                      "Enable this if your scans are small, look blurry when zoomed in, "
+                      "or if the OCR is missing or garbling characters.\n\n"
+                      "Default: off",
+        "tt_factor": "Enlargement multiplier.\n\n"
+                     "2.0 doubles the image dimensions (4× the pixels) and is "
+                     "enough for most low-resolution scans.\n\n"
+                     "Only go above 2.0 if the scan was originally very small "
+                     "(under 150 DPI). Higher values increase file size and "
+                     "processing time with diminishing OCR benefit.\n\n"
+                     "Default: 2.0×",
+        # ---- count words (singular / plural) ----
+        "box_1": "box",        "box_n": "boxes",
+        "point_1": "point",    "point_n": "points",
+        "corr_1": "correction", "corr_n": "corrections",
+        "img_1": "preprocessed image", "img_n": "preprocessed images",
+        # ---- status messages ----
+        "ls_corrected_pts":   "{name}  [{n} {boxw} corrected] — adjust & re-apply, or Next ▶",
+        "ls_corrected_nopts": "{name}  [{n} {boxw} corrected] — place corners to re-correct, or Next ▶",
+        "ls_restored":        "{name} — {n} {boxw} restored, adjust or Apply.",
+        "ls_fresh":           "{name} — click 4 corners to start a box.",
+        "click_4_corners":    "Click 4 corners to start a box.",
+        "box_complete":       "Box {box_num} complete — click to start box {nxt}, or Apply.",
+        "box_progress":       "Box {box_num}: {rem}/4 points.",
+        "boxes_set":          "{n} {boxw} set — drag to adjust, or Apply.",
+        "point_deleted_partial": "Point deleted — {rem}/4 placed in the last box; click to add the rest.",
+        "point_deleted":      "Point deleted.",
+        "box_deleted_empty":  "Box deleted — click 4 corners to start a box.",
+        "box_deleted_remaining": "Box deleted — {n} {boxw} remaining.",
+        "menu_delete_point":     "Delete point {pt}",
+        "menu_delete_box":       "Delete box {box}",
+        # ---- apply ----
+        "no_image_title":  "No image",
+        "no_image_msg":    "No image loaded.",
+        "invalid_title":   "Invalid selection",
+        "invalid_msg":     "Points must be a multiple of 4 (one complete box each).\n"
+                           "Currently have {n} {ptw}.",
+        "invalid_finish":  "\nFinish the current box or reset it.",
+        "transform_failed_title": "Transform failed",
+        "save_failed_title":   "Save failed",
+        "save_failed_encode":  "Could not encode {filename}.",
+        "saved_boxes":     "Saved {b} {boxw}{pp} for {name}",
+        "pp_note":         " (preprocessed)",
+        # ---- save-options dialog ----
+        "so_title":         "Save Options",
+        "so_header_box":    "Box {i}",
+        "so_header_single": "Save Options",
+        "so_label_field":   "  Label  (blank = no sub-folder):",
+        "so_filename_field": "  Filename:",
+        "ok":     "OK",
+        "cancel": "Cancel",
+        # ---- delete-correction dialog ----
+        "dc_title":      "Delete Correction",
+        "dc_prompt":     "Tick the correction(s) to delete for {name}:",
+        "dc_file_missing": "   (file missing)",
+        "dc_delete_btn": "Delete…",
+        "nothing_to_delete_title": "Nothing to delete",
+        "nothing_to_delete_msg":   "{name} has no saved correction to delete.",
+        "confirm_title": "Confirm deletion",
+        "confirm_msg":   "Permanently delete {n} {corrw}?\n\n{lst}\n\n"
+                         "This deletes the corrected image file(s) from disk and removes "
+                         "the matching {boxw}. This cannot be undone.",
+        "delete_failed_title": "Delete failed",
+        "delete_failed_msg":   "Could not delete {name}:\n{exc}",
+        "deleted_ok":    "Deleted {n} {corrw} for {name}",
+        # ---- preprocessing save ----
+        "nothing_to_save_title": "Nothing to save",
+        "nothing_to_save_msg":   "Apply the perspective correction first.",
+        "preproc_failed_title":  "Preprocessing failed",
+        "saved_preproc":         "Saved {n} {imgw} for {name}",
+        # ---- image list / read errors ----
+        "not_found_title": "Not found",
+        "not_found_msg":   "Source directory not found:\n{dir}",
+        "read_error":      "Could not read: {exc}",
+        "decode_error":    "Could not decode {name}.",
+        # ---- language picker ----
+        "lang_title":  "Language / Sprache",
+        "lang_prompt": "Select language / Sprache wählen:",
+    },
+    "de": {
+        # ---- window / toolbar ----
+        "window_title":          "Perspektivkorrektur-Werkzeug",
+        "btn_prev":              "◀ Zurück",
+        "btn_next":              "Weiter ▶",
+        "btn_reset":             "Punkte zurücksetzen",
+        "btn_apply":             "Anwenden",
+        "btn_delete_correction": "Korrektur löschen",
+        "btn_fit":               "Anpassen",
+        "btn_preprocess":        "Vorverarbeitung",
+        "btn_save_preproc":      "Vorverarb. speichern",
+        "pane_original":         "Original",
+        "pane_corrected":        "Korrigiert",
+        "no_correction_yet":     "Noch keine Korrektur",
+        "total_dash":            "/ —",
+        "total_count":           "/ {total}",
+        "status_loading":        "Wird geladen…",
+        # ---- preprocessing panel ----
+        "pp_title":     "Vorverarbeitungsparameter",
+        "pp_denoise":   "Entrauschen",
+        "pp_clahe":     "CLAHE",
+        "pp_threshold": "Schwellenwert:",
+        "pp_block":     "Block:",
+        "pp_c":         "C:",
+        "pp_morph":     "Morphologie",
+        "pp_kernel":    "Kernel:",
+        "pp_upscale":   "Hochskalieren",
+        "pp_factor":    "Faktor:",
+        "pp_h":         "h:",
+        "pp_clip":      "Clip:",
+        "pp_grid":      "Raster:",
+        "thresh_values": ["Keine", "Otsu", "Adaptiv"],
+        # ---- tooltips ----
+        "tt_denoise": "Entfernt Scanner-Körnung und Papierflecken.\n\n"
+                      "Aktivieren Sie dies, wenn Ihr Scan 'verrauscht' wirkt oder eine raue "
+                      "Textur hat. Für die meisten Dokumente unbedenklich — es läuft vor "
+                      "allem anderen.\n\n"
+                      "Standard: ein",
+        "tt_h": "Entrausch-Stärke.\n\n"
+                "Höher = aggressivere Entfernung, aber sehr hohe Werte können feine "
+                "Federstriche oder dünne Schreibmaschinenzeichen aufweichen.\n\n"
+                "Erhöhen Sie auf 20–30 nur, wenn in der Vorschau noch deutlich Körnung "
+                "sichtbar ist.\n\n"
+                "Standard: 10",
+        "tt_clahe": "Gleicht ungleichmäßige Beleuchtung über die Seite hinweg aus.\n\n"
+                    "Nützlich bei vergilbtem Papier, Falten oder Scans, bei denen eine Ecke "
+                    "dunkler erscheint als eine andere. Erhöht den Kontrast in kleinen "
+                    "lokalen Bereichen statt auf der gesamten Seite.\n\n"
+                    "Standard: ein",
+        "tt_clip": "Stärke der Kontrastanhebung.\n\n"
+                   "Höher = dunklere Bereiche werden stärker angehoben, aber Werte über 4 "
+                   "können helle Höfe um dunkle Tinte erzeugen.\n\n"
+                   "Standard: 2.0",
+        "tt_grid": "Kachelgröße für die lokale Kontrastanpassung.\n\n"
+                   "Die Seite wird in ein Raster unterteilt und jede Kachel unabhängig "
+                   "angepasst. Kleineres Raster = feinere Anpassungen, kann aber auf sehr "
+                   "gleichmäßigen Seiten fleckig wirken.\n\n"
+                   "Versuchen Sie 4 bei Seiten mit starker ungleichmäßiger Verfärbung.\n\n"
+                   "Standard: 8",
+        "tt_threshold": "Wandelt das Bild in reines Schwarz-Weiß um, was den Text schärfer "
+                        "und für OCR besser lesbar macht.\n\n"
+                        "• Keine – als Graustufen belassen (keine Umwandlung)\n"
+                        "• Otsu – gut für saubere, gleichmäßig beleuchtete "
+                        "Schreibmaschinenseiten; findet einen globalen Schwellenwert "
+                        "zwischen Tinte und Papier\n"
+                        "• Adaptiv – am besten für Handschrift oder gemischte Seiten; "
+                        "entscheidet Schwarz/Weiß für jeden kleinen Bereich separat und "
+                        "bewältigt ungleichmäßige Tinte und Beleuchtung\n\n"
+                        "Standard: Adaptiv",
+        "tt_block": "Nur adaptiver Schwellenwert — Bereichsgröße in Pixeln.\n\n"
+                    "Jedes Pixel betrachtet seine Nachbarn innerhalb dieses Quadrats, um "
+                    "zu entscheiden, ob es schwarz oder weiß sein soll.\n\n"
+                    "Zu klein (z. B. 11) → Text kann fleckig oder unterbrochen wirken.\n"
+                    "Zu groß (z. B. 101) → Hintergrundgrau läuft in den Text.\n\n"
+                    "Erhöhen bei fleckigen Bereichen; verringern, wenn dünne Striche "
+                    "verschwinden.\n\n"
+                    "Standard: 31",
+        "tt_c": "Nur adaptiver Schwellenwert — Dunkelheits-Bias.\n\n"
+                "Verschiebt die Schwarz/Weiß-Grenze innerhalb jedes Bereichs:\n"
+                "• Erhöhen, wenn der Hintergrund grau erscheint\n"
+                "• Verringern, wenn Tintenstriche weiß werden und verschwinden\n\n"
+                "Standard: 10",
+        "tt_morph": "Füllt winzige Lücken und Unterbrechungen in Buchstabenstrichen.\n\n"
+                    "Am nützlichsten bei Handschrift, wo der Stift mitten im Buchstaben "
+                    "abgesetzt wurde und kleine getrennte Teile hinterlassen hat. Bei "
+                    "sauberen Schreibmaschinendokumenten ausgeschaltet lassen — es kann "
+                    "nahe beieinanderliegende Buchstaben verschmelzen.\n\n"
+                    "Standard: aus",
+        "tt_kernel": "Pinselgröße zum Lückenfüllen in Pixeln.\n\n"
+                     "1–2 schließt haarfeine Unterbrechungen, ohne die Buchstabenform "
+                     "zu verändern.\n"
+                     "3+ füllt größere Lücken, riskiert aber das Verschmelzen "
+                     "benachbarter Buchstaben oder ein merkliches Verdicken dünner "
+                     "Striche.\n\n"
+                     "Standard: 2",
+        "tt_upscale": "Vergrößert das Bild vor der OCR.\n\n"
+                      "Die meisten OCR-Engines benötigen mindestens 300 DPI, um Text "
+                      "zuverlässig zu lesen. Aktivieren Sie dies, wenn Ihre Scans klein "
+                      "sind, beim Hineinzoomen unscharf wirken oder die OCR Zeichen "
+                      "verfehlt oder verstümmelt.\n\n"
+                      "Standard: aus",
+        "tt_factor": "Vergrößerungsfaktor.\n\n"
+                     "2.0 verdoppelt die Bildabmessungen (4× so viele Pixel) und reicht "
+                     "für die meisten niedrig aufgelösten Scans.\n\n"
+                     "Gehen Sie nur über 2.0, wenn der Scan ursprünglich sehr klein war "
+                     "(unter 150 DPI). Höhere Werte erhöhen Dateigröße und "
+                     "Verarbeitungszeit bei abnehmendem OCR-Nutzen.\n\n"
+                     "Standard: 2.0×",
+        # ---- count words (singular / plural) ----
+        "box_1": "Box",         "box_n": "Boxen",
+        "point_1": "Punkt",     "point_n": "Punkte",
+        "corr_1": "Korrektur",  "corr_n": "Korrekturen",
+        "img_1": "vorverarbeitetes Bild", "img_n": "vorverarbeitete Bilder",
+        # ---- status messages ----
+        "ls_corrected_pts":   "{name}  [{n} {boxw} korrigiert] — anpassen & erneut anwenden, oder Weiter ▶",
+        "ls_corrected_nopts": "{name}  [{n} {boxw} korrigiert] — Ecken setzen zum erneuten Korrigieren, oder Weiter ▶",
+        "ls_restored":        "{name} — {n} {boxw} wiederhergestellt, anpassen oder Anwenden.",
+        "ls_fresh":           "{name} — 4 Ecken anklicken, um eine Box zu beginnen.",
+        "click_4_corners":    "4 Ecken anklicken, um eine Box zu beginnen.",
+        "box_complete":       "Box {box_num} fertig — klicken, um Box {nxt} zu beginnen, oder Anwenden.",
+        "box_progress":       "Box {box_num}: {rem}/4 Punkte.",
+        "boxes_set":          "{n} {boxw} gesetzt — ziehen zum Anpassen, oder Anwenden.",
+        "point_deleted_partial": "Punkt gelöscht — {rem}/4 in der letzten Box gesetzt; klicken, um den Rest hinzuzufügen.",
+        "point_deleted":      "Punkt gelöscht.",
+        "box_deleted_empty":  "Box gelöscht — 4 Ecken anklicken, um eine Box zu beginnen.",
+        "box_deleted_remaining": "Box gelöscht — {n} {boxw} übrig.",
+        "menu_delete_point":     "Punkt {pt} löschen",
+        "menu_delete_box":       "Box {box} löschen",
+        # ---- apply ----
+        "no_image_title":  "Kein Bild",
+        "no_image_msg":    "Kein Bild geladen.",
+        "invalid_title":   "Ungültige Auswahl",
+        "invalid_msg":     "Punkte müssen ein Vielfaches von 4 sein (je eine vollständige Box).\n"
+                           "Aktuell {n} {ptw}.",
+        "invalid_finish":  "\nVervollständigen Sie die aktuelle Box oder setzen Sie sie zurück.",
+        "transform_failed_title": "Transformation fehlgeschlagen",
+        "save_failed_title":   "Speichern fehlgeschlagen",
+        "save_failed_encode":  "{filename} konnte nicht kodiert werden.",
+        "saved_boxes":     "{b} {boxw}{pp} für {name} gespeichert",
+        "pp_note":         " (vorverarbeitet)",
+        # ---- save-options dialog ----
+        "so_title":         "Speicheroptionen",
+        "so_header_box":    "Box {i}",
+        "so_header_single": "Speicheroptionen",
+        "so_label_field":   "  Bezeichnung  (leer = kein Unterordner):",
+        "so_filename_field": "  Dateiname:",
+        "ok":     "OK",
+        "cancel": "Abbrechen",
+        # ---- delete-correction dialog ----
+        "dc_title":      "Korrektur löschen",
+        "dc_prompt":     "Markieren Sie die zu löschende(n) Korrektur(en) für {name}:",
+        "dc_file_missing": "   (Datei fehlt)",
+        "dc_delete_btn": "Löschen…",
+        "nothing_to_delete_title": "Nichts zu löschen",
+        "nothing_to_delete_msg":   "{name} hat keine gespeicherte Korrektur zum Löschen.",
+        "confirm_title": "Löschen bestätigen",
+        "confirm_msg":   "{n} {corrw} endgültig löschen?\n\n{lst}\n\n"
+                         "Dies löscht die korrigierte(n) Bilddatei(en) von der Festplatte "
+                         "und entfernt die zugehörige(n) {boxw}. Dies kann nicht rückgängig "
+                         "gemacht werden.",
+        "delete_failed_title": "Löschen fehlgeschlagen",
+        "delete_failed_msg":   "{name} konnte nicht gelöscht werden:\n{exc}",
+        "deleted_ok":    "{n} {corrw} für {name} gelöscht",
+        # ---- preprocessing save ----
+        "nothing_to_save_title": "Nichts zu speichern",
+        "nothing_to_save_msg":   "Wenden Sie zuerst die Perspektivkorrektur an.",
+        "preproc_failed_title":  "Vorverarbeitung fehlgeschlagen",
+        "saved_preproc":         "{n} {imgw} für {name} gespeichert",
+        # ---- image list / read errors ----
+        "not_found_title": "Nicht gefunden",
+        "not_found_msg":   "Quellverzeichnis nicht gefunden:\n{dir}",
+        "read_error":      "Konnte nicht lesen: {exc}",
+        "decode_error":    "{name} konnte nicht dekodiert werden.",
+        # ---- language picker ----
+        "lang_title":  "Language / Sprache",
+        "lang_prompt": "Select language / Sprache wählen:",
+    },
+}
+
 
 class _Tooltip:
     """Lightweight hover tooltip for any Tkinter widget."""
@@ -86,6 +438,8 @@ class PerspectiveApp:
         self.root = root
         self.root.title("Perspective Correction Tool")
 
+        self._lang: str = "en"
+
         self.image_path: str | None = None
         self.original: np.ndarray | None = None
         self.tk_image: ImageTk.PhotoImage | None = None
@@ -132,6 +486,7 @@ class PerspectiveApp:
         self._pp_clahe_clip = tk.DoubleVar(value=2.0)
         self._pp_clahe_grid = tk.IntVar(value=8)
         self._pp_thresh     = tk.StringVar(value="Adaptive")
+        self._pp_thresh_display = tk.StringVar(value="Adaptive")
         self._pp_block      = tk.IntVar(value=31)
         self._pp_c          = tk.IntVar(value=10)
         self._pp_morph      = tk.BooleanVar(value=False)
@@ -143,7 +498,14 @@ class PerspectiveApp:
         self._load_corrections()
         self._load_boxes()
         self._load_preprocess_settings()
+
+        # Pick the UI language once, before the main window is built. The
+        # choice is fixed for the session — restart to change it.
+        self.root.withdraw()
+        self._lang = self._ask_language()
+
         self._build_ui()
+        self.root.deiconify()
         self.root.bind("<Configure>", self._on_window_resize)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -151,33 +513,104 @@ class PerspectiveApp:
         if self._image_list:
             self._go_to(0)
 
+    # ---------------------------------------------------------- Translation --
+
+    def t(self, key: str, **kw) -> str:
+        """Look up a UI string in the active language, with English fallback."""
+        table = TRANSLATIONS.get(self._lang, TRANSLATIONS["en"])
+        s = table.get(key)
+        if not isinstance(s, str):
+            s = TRANSLATIONS["en"].get(key)
+        if not isinstance(s, str):
+            return key
+        return s.format(**kw) if kw else s
+
+    def tl(self, key: str) -> list:
+        """Look up a list-valued translation entry (e.g. combobox values)."""
+        table = TRANSLATIONS.get(self._lang, TRANSLATIONS["en"])
+        val = table.get(key)
+        if not isinstance(val, list):
+            val = TRANSLATIONS["en"].get(key)
+        return list(val) if isinstance(val, list) else []
+
+    def _w_box(self, n: int) -> str:
+        return self.t("box_1") if n == 1 else self.t("box_n")
+
+    def _w_point(self, n: int) -> str:
+        return self.t("point_1") if n == 1 else self.t("point_n")
+
+    def _w_corr(self, n: int) -> str:
+        return self.t("corr_1") if n == 1 else self.t("corr_n")
+
+    def _w_img(self, n: int) -> str:
+        return self.t("img_1") if n == 1 else self.t("img_n")
+
+    def _ask_language(self) -> str:
+        """Modal startup picker. Returns 'en' or 'de' (defaults to 'en')."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(TRANSLATIONS["en"]["lang_title"])
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        choice = {"lang": "en"}
+
+        ttk.Label(
+            dialog, text=TRANSLATIONS["en"]["lang_prompt"], font=("Arial", 11),
+        ).pack(padx=28, pady=(20, 14))
+
+        btns = ttk.Frame(dialog)
+        btns.pack(padx=28, pady=(0, 20))
+
+        def pick(code: str) -> None:
+            choice["lang"] = code
+            dialog.destroy()
+
+        ttk.Button(btns, text="English", width=14,
+                   command=lambda: pick("en")).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text="Deutsch", width=14,
+                   command=lambda: pick("de")).pack(side=tk.LEFT, padx=6)
+
+        # Closing the window keeps the default (English).
+        dialog.protocol("WM_DELETE_WINDOW", lambda: pick("en"))
+        dialog.bind("<Return>", lambda _e: pick(choice["lang"]))
+
+        # Centre on screen (the main window is withdrawn at this point).
+        dialog.update_idletasks()
+        w, h = dialog.winfo_width(), dialog.winfo_height()
+        sw, sh = dialog.winfo_screenwidth(), dialog.winfo_screenheight()
+        dialog.geometry(f"+{(sw - w) // 2}+{(sh - h) // 2}")
+
+        dialog.wait_window()
+        return choice["lang"]
+
     # ------------------------------------------------------------------ UI --
 
     def _build_ui(self) -> None:
+        self.root.title(self.t("window_title"))
         toolbar = ttk.Frame(self.root, padding=6)
         toolbar.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Button(toolbar, text="◀ Prev",       command=self.go_prev).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Next ▶",       command=self.go_next).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text=self.t("btn_prev"), command=self.go_prev).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text=self.t("btn_next"), command=self.go_next).pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(toolbar, text="Reset Points", command=self.reset_points).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Apply",        command=self.apply_correction).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="Delete Correction",
+        ttk.Button(toolbar, text=self.t("btn_reset"), command=self.reset_points).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text=self.t("btn_apply"), command=self.apply_correction).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text=self.t("btn_delete_correction"),
                    command=self.delete_correction).pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
-        ttk.Button(toolbar, text="−",   width=2, command=self.zoom_out).pack(side=tk.LEFT, padx=1)
-        ttk.Button(toolbar, text="Fit", width=3, command=self.zoom_fit).pack(side=tk.LEFT, padx=1)
-        ttk.Button(toolbar, text="+",   width=2, command=self.zoom_in).pack(side=tk.LEFT, padx=1)
+        ttk.Button(toolbar, text="−", width=2, command=self.zoom_out).pack(side=tk.LEFT, padx=1)
+        ttk.Button(toolbar, text=self.t("btn_fit"), command=self.zoom_fit).pack(side=tk.LEFT, padx=1)
+        ttk.Button(toolbar, text="+", width=2, command=self.zoom_in).pack(side=tk.LEFT, padx=1)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
 
         ttk.Checkbutton(
-            toolbar, text="Preprocess",
+            toolbar, text=self.t("btn_preprocess"),
             variable=self._pp_enabled,
             command=self._toggle_preprocess_panel,
         ).pack(side=tk.LEFT, padx=2)
 
         self._pp_save_btn = ttk.Button(
-            toolbar, text="Save Preproc", state=tk.DISABLED,
+            toolbar, text=self.t("btn_save_preproc"), state=tk.DISABLED,
             command=self._save_preprocess_only,
         )
         self._pp_save_btn.pack(side=tk.LEFT, padx=2)
@@ -192,9 +625,9 @@ class PerspectiveApp:
         self._page_entry.pack(side=tk.LEFT, padx=0)
         self._page_entry.bind("<Return>", self._on_jump)
         self._page_entry.bind("<FocusOut>", self._restore_page_entry)
-        self._total_label = ttk.Label(toolbar, text="/ —")
+        self._total_label = ttk.Label(toolbar, text=self.t("total_dash"))
         self._total_label.pack(side=tk.LEFT, padx=(2, 4))
-        self.status = ttk.Label(toolbar, text="Loading…")
+        self.status = ttk.Label(toolbar, text=self.t("status_loading"))
         self.status.pack(side=tk.LEFT, padx=8)
 
         # Collapsible preprocessing panel sits between toolbar and content.
@@ -210,7 +643,7 @@ class PerspectiveApp:
 
         left_frame = ttk.Frame(content)
         left_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        ttk.Label(left_frame, text="Original", anchor="center",
+        ttk.Label(left_frame, text=self.t("pane_original"), anchor="center",
                   font=("Arial", 10, "bold")).pack(fill=tk.X, pady=(2, 0))
         self.canvas = tk.Canvas(left_frame, bg="#202225", cursor="crosshair",
                                 highlightthickness=0)
@@ -220,7 +653,7 @@ class PerspectiveApp:
 
         right_frame = ttk.Frame(content)
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        ttk.Label(right_frame, text="Corrected", anchor="center",
+        ttk.Label(right_frame, text=self.t("pane_corrected"), anchor="center",
                   font=("Arial", 10, "bold")).pack(fill=tk.X, pady=(2, 0))
         self.canvas_right = tk.Canvas(right_frame, bg="#202225", cursor="arrow",
                                       highlightthickness=0)
@@ -251,7 +684,7 @@ class PerspectiveApp:
         self.root.bind("<KeyPress-0>", lambda _e: self.zoom_fit())
 
     def _build_preprocess_panel(self, parent: ttk.Frame) -> ttk.LabelFrame:
-        panel = ttk.LabelFrame(parent, text="Preprocessing Parameters", padding=(8, 4))
+        panel = ttk.LabelFrame(parent, text=self.t("pp_title"), padding=(8, 4))
 
         def tip(widget: tk.Widget, text: str) -> None:
             _Tooltip(widget, text)
@@ -285,130 +718,84 @@ class PerspectiveApp:
         row0 = ttk.Frame(panel)
         row0.pack(fill=tk.X, pady=2)
 
-        cb = ttk.Checkbutton(row0, text="Denoise", variable=self._pp_denoise,
+        cb = ttk.Checkbutton(row0, text=self.t("pp_denoise"), variable=self._pp_denoise,
                               command=self._schedule_preview)
         cb.pack(side=tk.LEFT, padx=(0, 2))
-        tip(cb, "Removes scanner grain and paper speckle.\n\n"
-                "Enable this if your scan looks 'noisy' or has a rough texture. "
-                "Safe to leave on for most documents — it runs before everything else.\n\n"
-                "Default: on")
+        tip(cb, self.t("tt_denoise"))
 
-        make_slider(row0, "h:", self._pp_denoise_h, 1, 40, width=3,
-                    tooltip="Denoising strength.\n\n"
-                            "Higher = more aggressive removal, but very high values can soften "
-                            "fine pen strokes or thin typewriter characters.\n\n"
-                            "Raise to 20–30 only if grain is still clearly visible in the preview.\n\n"
-                            "Default: 10").pack(side=tk.LEFT, padx=(0, 10))
+        make_slider(row0, self.t("pp_h"), self._pp_denoise_h, 1, 40, width=3,
+                    tooltip=self.t("tt_h")).pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Separator(row0, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
 
-        cb = ttk.Checkbutton(row0, text="CLAHE", variable=self._pp_clahe,
+        cb = ttk.Checkbutton(row0, text=self.t("pp_clahe"), variable=self._pp_clahe,
                               command=self._schedule_preview)
         cb.pack(side=tk.LEFT, padx=(0, 2))
-        tip(cb, "Evens out uneven lighting across the page.\n\n"
-                "Useful for yellowed paper, folds, or scans where one corner looks "
-                "darker than another. Works by boosting contrast in small local "
-                "regions rather than the page as a whole.\n\n"
-                "Default: on")
+        tip(cb, self.t("tt_clahe"))
 
-        make_slider(row0, "Clip:", self._pp_clahe_clip, 0.5, 8.0, fmt="{:.1f}",
-                    width=5,
-                    tooltip="Contrast boost strength.\n\n"
-                            "Higher = darker areas get a stronger lift, but values above 4 "
-                            "can create bright halos around dark ink.\n\n"
-                            "Default: 2.0").pack(side=tk.LEFT, padx=(0, 4))
+        make_slider(row0, self.t("pp_clip"), self._pp_clahe_clip, 0.5, 8.0, fmt="{:.1f}",
+                    width=5, tooltip=self.t("tt_clip")).pack(side=tk.LEFT, padx=(0, 4))
 
-        make_slider(row0, "Grid:", self._pp_clahe_grid, 4, 32, width=5,
-                    tooltip="Tile size for local contrast adjustment.\n\n"
-                            "The page is divided into a grid and each tile is adjusted "
-                            "independently. Smaller grid = finer adjustments, but can look "
-                            "patchy on very uniform pages.\n\n"
-                            "Try 4 for pages with heavy uneven staining.\n\n"
-                            "Default: 8").pack(side=tk.LEFT)
+        make_slider(row0, self.t("pp_grid"), self._pp_clahe_grid, 4, 32, width=5,
+                    tooltip=self.t("tt_grid")).pack(side=tk.LEFT)
 
         # ── Row 1: Threshold ────────────────────────────────────────────────
         row1 = ttk.Frame(panel)
         row1.pack(fill=tk.X, pady=2)
 
-        lbl = ttk.Label(row1, text="Threshold:", width=10)
+        lbl = ttk.Label(row1, text=self.t("pp_threshold"), width=10)
         lbl.pack(side=tk.LEFT)
-        tip(lbl, "Converts the image to pure black-and-white, which makes text sharper "
-                 "and more readable for OCR.\n\n"
-                 "• None – keep as greyscale (no conversion)\n"
-                 "• Otsu – good for clean, evenly-lit typewritten pages; finds one "
-                 "global cutoff between ink and paper\n"
-                 "• Adaptive – best for handwriting or mixed pages; decides black vs "
-                 "white separately for each small patch, handling uneven ink and lighting\n\n"
-                 "Default: Adaptive")
+        tip(lbl, self.t("tt_threshold"))
 
-        thresh_cb = ttk.Combobox(row1, textvariable=self._pp_thresh,
-                                  values=["None", "Otsu", "Adaptive"],
-                                  state="readonly", width=9)
+        # Display labels are localised; the pipeline keeps stable internal keys.
+        thresh_vals = self.tl("thresh_values")
+        try:
+            idx = THRESH_INTERNAL.index(self._pp_thresh.get())
+        except ValueError:
+            idx = THRESH_INTERNAL.index("Adaptive")
+            self._pp_thresh.set("Adaptive")
+        self._pp_thresh_display.set(thresh_vals[idx])
+
+        thresh_cb = ttk.Combobox(row1, textvariable=self._pp_thresh_display,
+                                  values=thresh_vals, state="readonly", width=9)
         thresh_cb.pack(side=tk.LEFT, padx=(2, 12))
-        thresh_cb.bind("<<ComboboxSelected>>", lambda _e: self._schedule_preview())
-        tip(thresh_cb, "Converts the image to pure black-and-white, which makes text sharper "
-                       "and more readable for OCR.\n\n"
-                       "• None – keep as greyscale (no conversion)\n"
-                       "• Otsu – good for clean, evenly-lit typewritten pages\n"
-                       "• Adaptive – best for handwriting, mixed pages, or uneven lighting\n\n"
-                       "Default: Adaptive")
 
-        make_slider(row1, "Block:", self._pp_block, 11, 101,
-                    tooltip="Adaptive threshold only — patch size in pixels.\n\n"
-                            "Each pixel looks at its neighbours within this square to decide "
-                            "whether it should be black or white.\n\n"
-                            "Too small (e.g. 11) → text can look patchy or broken.\n"
-                            "Too large (e.g. 101) → background grey bleeds into text.\n\n"
-                            "Increase if you see blotchy patches; decrease if thin strokes "
-                            "are disappearing.\n\n"
-                            "Default: 31").pack(side=tk.LEFT, padx=(0, 4))
+        def on_thresh(_e=None) -> None:
+            sel = self._pp_thresh_display.get()
+            if sel in thresh_vals:
+                self._pp_thresh.set(THRESH_INTERNAL[thresh_vals.index(sel)])
+            self._schedule_preview()
 
-        make_slider(row1, "C:", self._pp_c, 1, 30, width=3,
-                    tooltip="Adaptive threshold only — darkness bias.\n\n"
-                            "Shifts the black/white boundary within each patch:\n"
-                            "• Raise it if the background is coming out grey\n"
-                            "• Lower it if ink strokes are turning white and disappearing\n\n"
-                            "Default: 10").pack(side=tk.LEFT)
+        thresh_cb.bind("<<ComboboxSelected>>", on_thresh)
+        tip(thresh_cb, self.t("tt_threshold"))
+
+        make_slider(row1, self.t("pp_block"), self._pp_block, 11, 101,
+                    tooltip=self.t("tt_block")).pack(side=tk.LEFT, padx=(0, 4))
+
+        make_slider(row1, self.t("pp_c"), self._pp_c, 1, 30, width=3,
+                    tooltip=self.t("tt_c")).pack(side=tk.LEFT)
 
         # ── Row 2: Morphology | Upscale ─────────────────────────────────────
         row2 = ttk.Frame(panel)
         row2.pack(fill=tk.X, pady=2)
 
-        cb = ttk.Checkbutton(row2, text="Morphology", variable=self._pp_morph,
+        cb = ttk.Checkbutton(row2, text=self.t("pp_morph"), variable=self._pp_morph,
                               command=self._schedule_preview)
         cb.pack(side=tk.LEFT, padx=(0, 2))
-        tip(cb, "Fills tiny gaps and breaks in letter strokes.\n\n"
-                "Most useful for handwriting where the pen lifted mid-letter, leaving "
-                "small disconnected pieces. Leave off for clean typewritten documents "
-                "— it can merge letters that are close together.\n\n"
-                "Default: off")
+        tip(cb, self.t("tt_morph"))
 
-        make_slider(row2, "Kernel:", self._pp_morph_k, 1, 7,
-                    tooltip="Gap-filling brush size in pixels.\n\n"
-                            "1–2 closes hairline breaks without affecting letter shape.\n"
-                            "3+ fills larger gaps but risks merging nearby letters or "
-                            "thickening thin strokes noticeably.\n\n"
-                            "Default: 2").pack(side=tk.LEFT, padx=(0, 10))
+        make_slider(row2, self.t("pp_kernel"), self._pp_morph_k, 1, 7,
+                    tooltip=self.t("tt_kernel")).pack(side=tk.LEFT, padx=(0, 10))
 
         ttk.Separator(row2, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
 
-        cb = ttk.Checkbutton(row2, text="Upscale", variable=self._pp_upscale,
+        cb = ttk.Checkbutton(row2, text=self.t("pp_upscale"), variable=self._pp_upscale,
                               command=self._schedule_preview)
         cb.pack(side=tk.LEFT, padx=(0, 2))
-        tip(cb, "Enlarges the image before OCR.\n\n"
-                "Most OCR engines need at least 300 DPI to read text reliably. "
-                "Enable this if your scans are small, look blurry when zoomed in, "
-                "or if the OCR is missing or garbling characters.\n\n"
-                "Default: off")
+        tip(cb, self.t("tt_upscale"))
 
-        make_slider(row2, "Factor:", self._pp_upscale_f, 1.0, 4.0, fmt="{:.1f}×",
-                    tooltip="Enlargement multiplier.\n\n"
-                            "2.0 doubles the image dimensions (4× the pixels) and is "
-                            "enough for most low-resolution scans.\n\n"
-                            "Only go above 2.0 if the scan was originally very small "
-                            "(under 150 DPI). Higher values increase file size and "
-                            "processing time with diminishing OCR benefit.\n\n"
-                            "Default: 2.0×").pack(side=tk.LEFT)
+        make_slider(row2, self.t("pp_factor"), self._pp_upscale_f, 1.0, 4.0, fmt="{:.1f}×",
+                    tooltip=self.t("tt_factor")).pack(side=tk.LEFT)
 
         return panel
 
@@ -513,7 +900,8 @@ class PerspectiveApp:
 
     def _load_image_list(self) -> None:
         if not BASE_DIR.is_dir():
-            messagebox.showerror("Not found", f"Source directory not found:\n{BASE_DIR}")
+            messagebox.showerror(self.t("not_found_title"),
+                                  self.t("not_found_msg", dir=BASE_DIR))
             return
         self._image_list = sorted(
             p for p in BASE_DIR.rglob("*")
@@ -548,10 +936,10 @@ class PerspectiveApp:
             data = np.fromfile(str(src), dtype=np.uint8)
             image = cv2.imdecode(data, cv2.IMREAD_COLOR)
         except Exception as exc:
-            self._set_status(f"Could not read: {exc}")
+            self._set_status(self.t("read_error", exc=exc))
             return
         if image is None:
-            self._set_status(f"Could not decode {src.name}.")
+            self._set_status(self.t("decode_error", name=src.name))
             return
 
         self.image_path = str(src)
@@ -587,31 +975,28 @@ class PerspectiveApp:
         n_done = len(paths)
         n_boxes = len(self.points) // 4
         if n_done and self.points:
-            self._set_status(
-                f"{src.name}  [{n_done} box{'es' if n_done > 1 else ''} corrected]"
-                " — adjust & re-apply, or Next ▶"
-            )
+            self._set_status(self.t("ls_corrected_pts", name=src.name,
+                                    n=n_done, boxw=self._w_box(n_done)))
         elif n_done:
-            self._set_status(
-                f"{src.name}  [{n_done} box{'es' if n_done > 1 else ''} corrected]"
-                " — place corners to re-correct, or Next ▶"
-            )
+            self._set_status(self.t("ls_corrected_nopts", name=src.name,
+                                    n=n_done, boxw=self._w_box(n_done)))
         elif n_boxes:
-            self._set_status(f"{src.name} — {n_boxes} box(es) restored, adjust or Apply.")
+            self._set_status(self.t("ls_restored", name=src.name,
+                                    n=n_boxes, boxw=self._w_box(n_boxes)))
         else:
-            self._set_status(f"{src.name} — click 4 corners to start a box.")
+            self._set_status(self.t("ls_fresh", name=src.name))
 
     def _update_nav_label(self) -> None:
         total = len(self._image_list)
         if total == 0:
             self._done_label.config(text=" ")
             self._page_var.set("—")
-            self._total_label.config(text="/ —")
+            self._total_label.config(text=self.t("total_dash"))
             return
         done = "✓" if self._is_corrected(self._image_list[self._current_idx]) else " "
         self._done_label.config(text=done)
         self._page_var.set(str(self._current_idx + 1))
-        self._total_label.config(text=f"/ {total}")
+        self._total_label.config(text=self.t("total_count", total=total))
 
     def _on_jump(self, _event=None) -> str:
         try:
@@ -737,7 +1122,7 @@ class PerspectiveApp:
 
         if not self.corrected:
             self.canvas_right.create_text(
-                cw // 2, ch // 2, text="No correction yet",
+                cw // 2, ch // 2, text=self.t("no_correction_yet"),
                 fill="#666677", font=("Arial", 14),
             )
             return
@@ -821,11 +1206,9 @@ class PerspectiveApp:
         remainder = n % 4
         box_num = (n - 1) // 4 + 1
         if remainder == 0:
-            self._set_status(
-                f"Box {box_num} complete — click to start box {box_num + 1}, or Apply."
-            )
+            self._set_status(self.t("box_complete", box_num=box_num, nxt=box_num + 1))
         else:
-            self._set_status(f"Box {box_num}: {remainder}/4 points.")
+            self._set_status(self.t("box_progress", box_num=box_num, rem=remainder))
 
     def _on_drag(self, event: tk.Event) -> None:
         if self._drag_idx is None or self.original is None:
@@ -840,9 +1223,7 @@ class PerspectiveApp:
             n = len(self.points)
             if n > 0 and n % 4 == 0:
                 b = n // 4
-                self._set_status(
-                    f"{b} box{'es' if b > 1 else ''} set — drag to adjust, or Apply."
-                )
+                self._set_status(self.t("boxes_set", n=b, boxw=self._w_box(b)))
 
     def _on_hover(self, event: tk.Event) -> None:
         if self._panning:
@@ -862,11 +1243,11 @@ class PerspectiveApp:
 
         menu = tk.Menu(self.canvas, tearoff=0)
         menu.add_command(
-            label=f"Delete point {box_idx + 1}.{pt_in_box + 1}",
+            label=self.t("menu_delete_point", pt=f"{box_idx + 1}.{pt_in_box + 1}"),
             command=lambda i=idx: self._delete_point(i),
         )
         menu.add_command(
-            label=f"Delete box {box_idx + 1}",
+            label=self.t("menu_delete_box", box=box_idx + 1),
             command=lambda b=box_idx: self._delete_box(b),
         )
         # Track open state so the click that dismisses the menu doesn't also
@@ -888,13 +1269,11 @@ class PerspectiveApp:
         n = len(self.points)
         rem = n % 4
         if n == 0:
-            self._set_status("Click 4 corners to start a box.")
+            self._set_status(self.t("click_4_corners"))
         elif rem:
-            self._set_status(
-                f"Point deleted — {rem}/4 placed in the last box; click to add the rest."
-            )
+            self._set_status(self.t("point_deleted_partial", rem=rem))
         else:
-            self._set_status("Point deleted.")
+            self._set_status(self.t("point_deleted"))
 
     def _delete_box(self, box_idx: int) -> None:
         start = box_idx * 4
@@ -905,11 +1284,10 @@ class PerspectiveApp:
         self._redraw_points()
         n_boxes = len(self.points) // 4
         if not self.points:
-            self._set_status("Box deleted — click 4 corners to start a box.")
+            self._set_status(self.t("box_deleted_empty"))
         else:
-            self._set_status(
-                f"Box deleted — {n_boxes} box{'es' if n_boxes != 1 else ''} remaining."
-            )
+            self._set_status(self.t("box_deleted_remaining",
+                                    n=n_boxes, boxw=self._w_box(n_boxes)))
 
     # ------------------------------------------------- Delete a correction --
 
@@ -922,7 +1300,7 @@ class PerspectiveApp:
         updated to match.
         """
         if self.image_path is None or self.original is None:
-            messagebox.showinfo("No image", "No image loaded.")
+            messagebox.showinfo(self.t("no_image_title"), self.t("no_image_msg"))
             return
 
         src = Path(self.image_path)
@@ -943,8 +1321,8 @@ class PerspectiveApp:
 
         if not items:
             messagebox.showinfo(
-                "Nothing to delete",
-                f"{src.name} has no saved correction to delete."
+                self.t("nothing_to_delete_title"),
+                self.t("nothing_to_delete_msg", name=src.name),
             )
             return
 
@@ -954,13 +1332,11 @@ class PerspectiveApp:
 
         names = [items[i][1].name for i in selected]
         n = len(selected)
+        lst = "\n".join(f"• {nm}" for nm in names)
         if not messagebox.askyesno(
-            "Confirm deletion",
-            f"Permanently delete {n} correction{'s' if n != 1 else ''}?\n\n"
-            + "\n".join(f"• {nm}" for nm in names)
-            + "\n\nThis deletes the corrected image file"
-              f"{'s' if n != 1 else ''} from disk and removes the matching box. "
-              "This cannot be undone.",
+            self.t("confirm_title"),
+            self.t("confirm_msg", n=n, corrw=self._w_corr(n),
+                   lst=lst, boxw=self._w_box(n)),
             icon="warning", default="no",
         ):
             return
@@ -973,8 +1349,10 @@ class PerspectiveApp:
                 try:
                     full.unlink()
                 except Exception as exc:
-                    messagebox.showerror("Delete failed",
-                                         f"Could not delete {full.name}:\n{exc}")
+                    messagebox.showerror(
+                        self.t("delete_failed_title"),
+                        self.t("delete_failed_msg", name=full.name, exc=exc),
+                    )
                     return
             if rel_outs is not None and 0 <= i < len(rel_outs):
                 del rel_outs[i]
@@ -1012,9 +1390,7 @@ class PerspectiveApp:
         self._redraw_points()
         self._render_corrected()
         self._update_nav_label()
-        self._set_status(
-            f"Deleted {n} correction{'s' if n != 1 else ''} for {src.name}"
-        )
+        self._set_status(self.t("deleted_ok", n=n, corrw=self._w_corr(n), name=src.name))
 
     def _ask_delete_selection(
         self, src: Path, items: list[tuple[str | None, Path]],
@@ -1022,14 +1398,14 @@ class PerspectiveApp:
     ) -> list[int] | None:
         """Checkbox dialog; returns the indices the user ticked, or None."""
         dialog = tk.Toplevel(self.root)
-        dialog.title("Delete Correction")
+        dialog.title(self.t("dc_title"))
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
 
         ttk.Label(
             dialog, justify=tk.LEFT, font=("Arial", 9),
-            text=f"Tick the correction(s) to delete for {src.name}:",
+            text=self.t("dc_prompt", name=src.name),
         ).pack(padx=16, pady=(12, 8), anchor="w")
 
         vars_: list[tk.BooleanVar] = []
@@ -1045,7 +1421,7 @@ class PerspectiveApp:
             else:
                 text = f"Box {i + 1}:   {full.name}"
             if not full.exists():
-                text += "   (file missing)"
+                text += self.t("dc_file_missing")
             ttk.Checkbutton(dialog, text=text, variable=var).pack(
                 padx=20, pady=2, anchor="w"
             )
@@ -1061,9 +1437,9 @@ class PerspectiveApp:
 
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=(10, 14))
-        ttk.Button(btn_frame, text="Delete…", command=on_ok,
+        ttk.Button(btn_frame, text=self.t("dc_delete_btn"), command=on_ok,
                    width=10).pack(side=tk.LEFT, padx=6)
-        ttk.Button(btn_frame, text="Cancel", command=on_cancel,
+        ttk.Button(btn_frame, text=self.t("cancel"), command=on_cancel,
                    width=10).pack(side=tk.LEFT, padx=6)
         dialog.bind("<Escape>", on_cancel)
 
@@ -1080,7 +1456,7 @@ class PerspectiveApp:
         self.points.clear()
         self._redraw_points()
         if self.original is not None:
-            self._set_status("Click 4 corners to start a box.")
+            self._set_status(self.t("click_4_corners"))
 
     def _redraw_points(self) -> None:
         self.canvas.delete("overlay")
@@ -1189,13 +1565,13 @@ class PerspectiveApp:
         rel_src = src.relative_to(BASE_DIR).as_posix()
         rel_outs = self._corrections.get(rel_src, [])
         if not rel_outs:
-            messagebox.showinfo("Nothing to save",
-                                 "Apply the perspective correction first.")
+            messagebox.showinfo(self.t("nothing_to_save_title"),
+                                 self.t("nothing_to_save_msg"))
             return
         try:
             processed = [self._preprocess(w) for w in self._warped_raw]
         except Exception as exc:
-            messagebox.showerror("Preprocessing failed", str(exc))
+            messagebox.showerror(self.t("preproc_failed_title"), str(exc))
             return
 
         for proc_img, rel_out in zip(processed, rel_outs):
@@ -1209,9 +1585,7 @@ class PerspectiveApp:
         self.corrected = processed
         self._render_corrected()
         n = len(processed)
-        self._set_status(
-            f"Saved {n} preprocessed image{'s' if n > 1 else ''} for {src.name}"
-        )
+        self._set_status(self.t("saved_preproc", n=n, imgw=self._w_img(n), name=src.name))
 
     # -------------------------------------------------------------- Apply ---
 
@@ -1226,7 +1600,7 @@ class PerspectiveApp:
 
     def _ask_save_options(self, src: Path, n_boxes: int) -> list[tuple[str, str]] | None:
         dialog = tk.Toplevel(self.root)
-        dialog.title("Save Options")
+        dialog.title(self.t("so_title"))
         dialog.resizable(False, False)
         dialog.transient(self.root)
         dialog.grab_set()
@@ -1242,18 +1616,19 @@ class PerspectiveApp:
                 ttk.Separator(dialog, orient=tk.HORIZONTAL).pack(
                     fill=tk.X, padx=12, pady=(6, 0)
                 )
-            header = f"Box {i + 1}" if n_boxes > 1 else "Save Options"
+            header = (self.t("so_header_box", i=i + 1) if n_boxes > 1
+                      else self.t("so_header_single"))
             ttk.Label(dialog, text=header, font=("Arial", 9, "bold")).pack(
                 padx=16, pady=(10, 2), anchor="w"
             )
-            ttk.Label(dialog, text="  Label  (blank = no sub-folder):").pack(
+            ttk.Label(dialog, text=self.t("so_label_field")).pack(
                 padx=16, pady=(0, 2), anchor="w"
             )
             lc = ttk.Combobox(dialog, values=self._labels, width=36)
             lc.pack(padx=16, pady=(0, 6))
             label_combos.append(lc)
 
-            ttk.Label(dialog, text="  Filename:").pack(padx=16, pady=(0, 2), anchor="w")
+            ttk.Label(dialog, text=self.t("so_filename_field")).pack(padx=16, pady=(0, 2), anchor="w")
             default_name = src.name if i == 0 else f"{stem}_{i + 1}{suffix}"
             nc = ttk.Combobox(dialog, values=folder_names, width=36)
             nc.set(default_name)
@@ -1282,8 +1657,8 @@ class PerspectiveApp:
 
         btn_frame = ttk.Frame(dialog)
         btn_frame.pack(pady=(8, 14))
-        ttk.Button(btn_frame, text="OK",     command=on_ok,     width=10).pack(side=tk.LEFT, padx=6)
-        ttk.Button(btn_frame, text="Cancel", command=on_cancel, width=10).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text=self.t("ok"),     command=on_ok,     width=10).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text=self.t("cancel"), command=on_cancel, width=10).pack(side=tk.LEFT, padx=6)
 
         all_combos = [c for pair in zip(label_combos, name_combos) for c in pair]
         for combo, nxt in zip(all_combos[:-1], all_combos[1:]):
@@ -1302,17 +1677,15 @@ class PerspectiveApp:
 
     def apply_correction(self) -> None:
         if self.original is None:
-            messagebox.showinfo("No image", "No image loaded.")
+            messagebox.showinfo(self.t("no_image_title"), self.t("no_image_msg"))
             return
 
         n = len(self.points)
         if n == 0 or n % 4 != 0:
-            messagebox.showerror(
-                "Invalid selection",
-                f"Points must be a multiple of 4 (one complete box each).\n"
-                f"Currently have {n} point{'s' if n != 1 else ''}."
-                + ("\nFinish the current box or reset it." if n % 4 != 0 else ""),
-            )
+            msg = self.t("invalid_msg", n=n, ptw=self._w_point(n))
+            if n % 4 != 0:
+                msg += self.t("invalid_finish")
+            messagebox.showerror(self.t("invalid_title"), msg)
             return
 
         warped_list: list[np.ndarray] = []
@@ -1321,7 +1694,7 @@ class PerspectiveApp:
             try:
                 warped_list.append(four_point_transform(self.original, pts))
             except Exception as exc:
-                messagebox.showerror("Transform failed", str(exc))
+                messagebox.showerror(self.t("transform_failed_title"), str(exc))
                 return
 
         # Store raw warped images for live re-preprocessing via sliders
@@ -1363,12 +1736,13 @@ class PerspectiveApp:
             ext = out.suffix.lower() or ".png"
             ok, buf = cv2.imencode(ext, save_img)
             if not ok:
-                messagebox.showerror("Save failed", f"Could not encode {filename}.")
+                messagebox.showerror(self.t("save_failed_title"),
+                                     self.t("save_failed_encode", filename=filename))
                 return
             try:
                 buf.tofile(str(out))
             except Exception as exc:
-                messagebox.showerror("Save failed", str(exc))
+                messagebox.showerror(self.t("save_failed_title"), str(exc))
                 return
 
             new_rel_outs.append(rel_out)
@@ -1386,8 +1760,9 @@ class PerspectiveApp:
         self._render_corrected()
         self._update_nav_label()
         b = len(to_save)
-        pp_note = " (preprocessed)" if self._pp_enabled.get() else ""
-        self._set_status(f"Saved {b} box{'es' if b > 1 else ''}{pp_note} for {src.name}")
+        pp_note = self.t("pp_note") if self._pp_enabled.get() else ""
+        self._set_status(self.t("saved_boxes", b=b, boxw=self._w_box(b),
+                                pp=pp_note, name=src.name))
 
     # ------------------------------------------------------------- Helpers --
 
