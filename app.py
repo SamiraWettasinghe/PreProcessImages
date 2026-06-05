@@ -162,6 +162,8 @@ class PerspectiveApp:
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(toolbar, text="Reset Points", command=self.reset_points).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="Apply",        command=self.apply_correction).pack(side=tk.LEFT, padx=2)
+        ttk.Button(toolbar, text="Delete Correction",
+                   command=self.delete_correction).pack(side=tk.LEFT, padx=2)
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
         ttk.Button(toolbar, text="−",   width=2, command=self.zoom_out).pack(side=tk.LEFT, padx=1)
         ttk.Button(toolbar, text="Fit", width=3, command=self.zoom_fit).pack(side=tk.LEFT, padx=1)
@@ -908,6 +910,171 @@ class PerspectiveApp:
             self._set_status(
                 f"Box deleted — {n_boxes} box{'es' if n_boxes != 1 else ''} remaining."
             )
+
+    # ------------------------------------------------- Delete a correction --
+
+    def delete_correction(self) -> None:
+        """Remove one or more saved corrected outputs (and their boxes).
+
+        Two-step safeguard: first a checkbox dialog to pick which corrected
+        image(s) to delete, then a yes/no confirmation. On confirm, the output
+        file(s) are unlinked and both corrections.json and boxes.json are
+        updated to match.
+        """
+        if self.image_path is None or self.original is None:
+            messagebox.showinfo("No image", "No image loaded.")
+            return
+
+        src = Path(self.image_path)
+        rel_src = src.relative_to(BASE_DIR).as_posix()
+        rel_src_parent = src.relative_to(BASE_DIR).parent
+        rel_outs = self._corrections.get(rel_src)
+
+        # Build the list of deletable corrections. Each item carries the
+        # corrections.json key entry (or None for a legacy unlabeled file) and
+        # the absolute output path.
+        items: list[tuple[str | None, Path]] = []
+        if rel_outs:
+            items = [(r, OUT_DIR / Path(r)) for r in rel_outs]
+        else:
+            default = OUT_DIR / src.relative_to(BASE_DIR)
+            if default.exists():
+                items = [(None, default)]
+
+        if not items:
+            messagebox.showinfo(
+                "Nothing to delete",
+                f"{src.name} has no saved correction to delete."
+            )
+            return
+
+        selected = self._ask_delete_selection(src, items, rel_src_parent)
+        if not selected:
+            return
+
+        names = [items[i][1].name for i in selected]
+        n = len(selected)
+        if not messagebox.askyesno(
+            "Confirm deletion",
+            f"Permanently delete {n} correction{'s' if n != 1 else ''}?\n\n"
+            + "\n".join(f"• {nm}" for nm in names)
+            + "\n\nThis deletes the corrected image file"
+              f"{'s' if n != 1 else ''} from disk and removes the matching box. "
+              "This cannot be undone.",
+            icon="warning", default="no",
+        ):
+            return
+
+        # Delete highest index first so earlier indices stay valid for both the
+        # corrections list and the (4-per-box) points list.
+        for i in sorted(selected, reverse=True):
+            _rel_out, full = items[i]
+            if full.exists():
+                try:
+                    full.unlink()
+                except Exception as exc:
+                    messagebox.showerror("Delete failed",
+                                         f"Could not delete {full.name}:\n{exc}")
+                    return
+            if rel_outs is not None and 0 <= i < len(rel_outs):
+                del rel_outs[i]
+            start = i * 4
+            if start + 4 <= len(self.points):
+                del self.points[start:start + 4]
+
+        # Update corrections.json
+        if rel_outs is not None:
+            if rel_outs:
+                self._corrections[rel_src] = rel_outs
+            else:
+                del self._corrections[rel_src]
+            self._save_corrections()
+
+        # Update boxes.json
+        self._saved_points[self.image_path] = list(self.points)
+        self._save_boxes()
+
+        # Reload remaining corrected outputs and refresh both panes.
+        self.corrected = []
+        for cp in self._corrected_paths(src):
+            try:
+                cdata = np.fromfile(str(cp), dtype=np.uint8)
+                img = cv2.imdecode(cdata, cv2.IMREAD_COLOR)
+                if img is not None:
+                    self.corrected.append(img)
+            except Exception:
+                pass
+        self._warped_raw = []
+        self._drag_idx = None
+        if self._pp_save_btn is not None:
+            self._pp_save_btn.config(state=tk.DISABLED)
+
+        self._redraw_points()
+        self._render_corrected()
+        self._update_nav_label()
+        self._set_status(
+            f"Deleted {n} correction{'s' if n != 1 else ''} for {src.name}"
+        )
+
+    def _ask_delete_selection(
+        self, src: Path, items: list[tuple[str | None, Path]],
+        rel_src_parent: Path,
+    ) -> list[int] | None:
+        """Checkbox dialog; returns the indices the user ticked, or None."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Delete Correction")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(
+            dialog, justify=tk.LEFT, font=("Arial", 9),
+            text=f"Tick the correction(s) to delete for {src.name}:",
+        ).pack(padx=16, pady=(12, 8), anchor="w")
+
+        vars_: list[tk.BooleanVar] = []
+        for i, (rel_out, full) in enumerate(items):
+            var = tk.BooleanVar(value=False)
+            vars_.append(var)
+            if rel_out is not None:
+                p = Path(rel_out)
+                if p.parent != rel_src_parent and p.parent.name:
+                    text = f"Box {i + 1}:   {p.parent.name} / {p.name}"
+                else:
+                    text = f"Box {i + 1}:   {p.name}"
+            else:
+                text = f"Box {i + 1}:   {full.name}"
+            if not full.exists():
+                text += "   (file missing)"
+            ttk.Checkbutton(dialog, text=text, variable=var).pack(
+                padx=20, pady=2, anchor="w"
+            )
+
+        result: list[list[int] | None] = [None]
+
+        def on_ok(_event=None) -> None:
+            result[0] = [i for i, v in enumerate(vars_) if v.get()]
+            dialog.destroy()
+
+        def on_cancel(_event=None) -> None:
+            dialog.destroy()
+
+        btn_frame = ttk.Frame(dialog)
+        btn_frame.pack(pady=(10, 14))
+        ttk.Button(btn_frame, text="Delete…", command=on_ok,
+                   width=10).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btn_frame, text="Cancel", command=on_cancel,
+                   width=10).pack(side=tk.LEFT, padx=6)
+        dialog.bind("<Escape>", on_cancel)
+
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+        px = self.root.winfo_x() + (self.root.winfo_width()  - dialog.winfo_width())  // 2
+        py = self.root.winfo_y() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{px}+{py}")
+
+        dialog.wait_window()
+        return result[0]
 
     def reset_points(self) -> None:
         self.points.clear()
