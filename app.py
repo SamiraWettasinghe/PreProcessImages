@@ -3,15 +3,26 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
 import cv2
 import numpy as np
 from PIL import Image, ImageTk
 
 from transform import four_point_transform
+from merge_sources import (
+    ARCHIVE_DIRNAME,
+    CropInfo,
+    archive_move,
+    discover_external_sources,
+    group_box,
+    label_of,
+    orphan_corrections,
+    unique_path,
+)
 
 
 POINT_RADIUS  = 6
@@ -31,6 +42,7 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 _HERE            = Path(__file__).resolve().parent
 BASE_DIR         = _HERE / "Akten_selektiert"
 OUT_DIR          = _HERE / "Akten_selektiert_corrected"
+ARCHIVE_DIR      = _HERE / ARCHIVE_DIRNAME
 LABELS_FILE      = _HERE / "labels.json"
 CORRECTIONS_FILE = _HERE / "corrections.json"
 PREPROCESS_FILE  = _HERE / "preprocess_settings.json"
@@ -208,6 +220,40 @@ TRANSLATIONS: dict[str, dict[str, object]] = {
         # ---- language picker ----
         "lang_title":  "Language / Sprache",
         "lang_prompt": "Select language / Sprache wählen:",
+        # ---- duplicates / external-source merge ----
+        "btn_show_duplicates": "Show Possible Duplicates",
+        "btn_orphan_report":   "Unreachable…",
+        "dup_also_in":     "Also corrected in: {tags}",
+        "dup_title":       "Possible Duplicates — {name}",
+        "dup_keep_btn":    "Keep selected…",
+        "dup_legend":      "Boxes on the original:",
+        "dup_card_main":   "main",
+        "dup_label_none":  "(no sub-folder)",
+        "dup_field_source":    "Source:",
+        "dup_field_subfolder": "Sub-folder:",
+        "dup_field_file":      "File:",
+        "dup_missing":     "(file missing)",
+        "dup_no_box":      "(no box recorded on original)",
+        "dup_dash_hint":   "Dashed = imported from another folder. A box only appears where "
+                           "that source saved corner points.",
+        "dup_none_title":  "No other versions",
+        "dup_none_msg":    "No other corrected versions were found for {name}.",
+        "dup_confirm_title":   "Confirm merge",
+        "dup_confirm_msg":     "Keep {k} crop(s) in the corrected folder and archive {a} other(s)?\n\n"
+                               "Archived files are moved to:\n{arch}\n(nothing is deleted).",
+        "dup_confirm_all_msg": "You ticked nothing to keep.\n\nThis archives ALL {a} correction(s) for "
+                               "{name}, leaving it uncorrected. Archived files are moved to:\n{arch}\n\nContinue?",
+        "dup_kept_missing":    "Skipped {n} selected crop(s) whose file was missing on disk.",
+        "dup_done":        "Merged {name}: kept {k}, archived {a}.",
+        # ---- orphan (unreachable) report ----
+        "orphan_title": "Unreachable external corrections",
+        "orphan_intro": "These corrections exist in external folders but their original image is "
+                        "not present locally, so they cannot be reviewed page-by-page:",
+        "orphan_empty": "No unreachable external corrections — every external crop has a local original.",
+        "orphan_count": "{n} unreachable correction(s).",
+        "orphan_save":  "Save to file…",
+        "orphan_saved": "Saved report to {path}",
+        "close":        "Close",
     },
     "de": {
         # ---- window / toolbar ----
@@ -385,6 +431,41 @@ TRANSLATIONS: dict[str, dict[str, object]] = {
         # ---- language picker ----
         "lang_title":  "Language / Sprache",
         "lang_prompt": "Select language / Sprache wählen:",
+        # ---- duplicates / external-source merge ----
+        "btn_show_duplicates": "Mögliche Duplikate anzeigen",
+        "btn_orphan_report":   "Nicht erreichbar…",
+        "dup_also_in":     "Auch korrigiert in: {tags}",
+        "dup_title":       "Mögliche Duplikate — {name}",
+        "dup_keep_btn":    "Auswahl behalten…",
+        "dup_legend":      "Boxen auf dem Original:",
+        "dup_card_main":   "Haupt",
+        "dup_label_none":  "(kein Unterordner)",
+        "dup_field_source":    "Quelle:",
+        "dup_field_subfolder": "Unterordner:",
+        "dup_field_file":      "Datei:",
+        "dup_missing":     "(Datei fehlt)",
+        "dup_no_box":      "(keine Box auf Original gespeichert)",
+        "dup_dash_hint":   "Gestrichelt = aus einem anderen Ordner importiert. Eine Box erscheint "
+                           "nur dort, wo diese Quelle Eckpunkte gespeichert hat.",
+        "dup_none_title":  "Keine weiteren Versionen",
+        "dup_none_msg":    "Für {name} wurden keine weiteren korrigierten Versionen gefunden.",
+        "dup_confirm_title":   "Zusammenführen bestätigen",
+        "dup_confirm_msg":     "{k} Ausschnitt(e) im Korrektur-Ordner behalten und {a} andere(n) archivieren?\n\n"
+                               "Archivierte Dateien werden verschoben nach:\n{arch}\n(nichts wird gelöscht).",
+        "dup_confirm_all_msg": "Sie haben nichts zum Behalten markiert.\n\nDies archiviert ALLE {a} Korrektur(en) "
+                               "für {name}, sodass es unkorrigiert bleibt. Archivierte Dateien werden verschoben "
+                               "nach:\n{arch}\n\nFortfahren?",
+        "dup_kept_missing":    "{n} ausgewählte(r) Ausschnitt(e) übersprungen, deren Datei auf der Festplatte fehlte.",
+        "dup_done":        "{name} zusammengeführt: {k} behalten, {a} archiviert.",
+        # ---- orphan (unreachable) report ----
+        "orphan_title": "Nicht erreichbare externe Korrekturen",
+        "orphan_intro": "Diese Korrekturen existieren in externen Ordnern, aber das Originalbild ist lokal "
+                        "nicht vorhanden, daher können sie nicht Seite für Seite überprüft werden:",
+        "orphan_empty": "Keine nicht erreichbaren externen Korrekturen — jeder externe Ausschnitt hat ein lokales Original.",
+        "orphan_count": "{n} nicht erreichbare Korrektur(en).",
+        "orphan_save":  "In Datei speichern…",
+        "orphan_saved": "Bericht gespeichert unter {path}",
+        "close":        "Schließen",
     },
 }
 
@@ -468,6 +549,9 @@ class PerspectiveApp:
         self._labels: list[str] = []
         self._corrections: dict[str, list[str]] = {}
 
+        # External `_X` corrected folders (other laptops' work) to merge from.
+        self._sources: list = []
+
         self._resize_job: str | None = None
         self._zoom_job:   str | None = None
 
@@ -498,6 +582,7 @@ class PerspectiveApp:
         self._load_corrections()
         self._load_boxes()
         self._load_preprocess_settings()
+        self._refresh_sources()
 
         # Pick the UI language once, before the main window is built. The
         # choice is fixed for the session — restart to change it.
@@ -616,6 +701,10 @@ class PerspectiveApp:
         self._pp_save_btn.pack(side=tk.LEFT, padx=2)
 
         ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
+        ttk.Button(toolbar, text=self.t("btn_orphan_report"),
+                   command=self.show_orphan_report).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=6)
 
         self._done_label = ttk.Label(toolbar, text=" ", width=2)
         self._done_label.pack(side=tk.LEFT, padx=(4, 0))
@@ -653,8 +742,16 @@ class PerspectiveApp:
 
         right_frame = ttk.Frame(content)
         right_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        ttk.Label(right_frame, text=self.t("pane_corrected"), anchor="center",
-                  font=("Arial", 10, "bold")).pack(fill=tk.X, pady=(2, 0))
+        rhead = ttk.Frame(right_frame)
+        rhead.pack(fill=tk.X, pady=(2, 0))
+        ttk.Label(rhead, text=self.t("pane_corrected"), anchor="center",
+                  font=("Arial", 10, "bold")).pack(side=tk.LEFT, expand=True, fill=tk.X)
+        self._dup_btn = ttk.Button(rhead, text=self.t("btn_show_duplicates"),
+                                   command=self.show_duplicates, state=tk.DISABLED)
+        self._dup_btn.pack(side=tk.RIGHT, padx=4)
+        self._dup_notice = ttk.Label(right_frame, text="", anchor="center",
+                                     foreground="#d08000", font=("Arial", 9))
+        self._dup_notice.pack(fill=tk.X)
         self.canvas_right = tk.Canvas(right_frame, bg="#202225", cursor="arrow",
                                       highlightthickness=0)
         self.canvas_right.pack(fill=tk.BOTH, expand=True)
@@ -827,6 +924,19 @@ class PerspectiveApp:
             json.dumps(self._corrections, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
+    def _refresh_sources(self) -> None:
+        """(Re)discover external `_X` corrected folders and their metadata."""
+        try:
+            self._sources = discover_external_sources(_HERE)
+        except Exception:
+            self._sources = []
+
+    def _source_by_tag(self, tag: str):
+        for s in self._sources:
+            if s.tag == tag:
+                return s
+        return None
+
     def _load_boxes(self) -> None:
         try:
             raw = json.loads(BOXES_FILE.read_text(encoding="utf-8"))
@@ -969,22 +1079,56 @@ class PerspectiveApp:
         self._render_both()
         self._update_nav_label()
         self._set_load_status(src)
+        self._update_dup_state(src)
+
+    def _update_dup_state(self, src: Path) -> None:
+        """Enable the duplicates button + notice when any `_X` folder has crops here."""
+        if not hasattr(self, "_dup_btn"):
+            return
+        rel_src = src.relative_to(BASE_DIR).as_posix()
+        tags = [s.tag for s in self._sources if s.has(rel_src)]
+        if tags:
+            self._dup_btn.config(state=tk.NORMAL)
+            self._dup_notice.config(text=self.t("dup_also_in", tags=", ".join(tags)))
+        else:
+            self._dup_btn.config(state=tk.DISABLED)
+            self._dup_notice.config(text="")
+
+    def _disp_name(self, src: Path) -> str:
+        """Status-bar label: filename + the corrected sub-folder(s) it is sorted into.
+
+        The author is already evident from the filename, so we show the label sub-folder
+        (e.g. ``Alber_008_P.png  [P]``) rather than the author folder. Multiple crops list
+        each distinct sub-folder; ``—`` marks a crop saved with no sub-folder.
+        """
+        name = src.name
+        try:
+            rel_src = src.relative_to(BASE_DIR).as_posix()
+        except Exception:
+            return name
+        subs: list[str] = []
+        for cp in self._corrected_paths(src):
+            lbl = label_of(rel_src, cp.relative_to(OUT_DIR).as_posix()) or "—"
+            if lbl not in subs:
+                subs.append(lbl)
+        return f"{name}  [{', '.join(subs)}]" if subs else name
 
     def _set_load_status(self, src: Path) -> None:
         paths = self._corrected_paths(src)
         n_done = len(paths)
         n_boxes = len(self.points) // 4
+        name = self._disp_name(src)
         if n_done and self.points:
-            self._set_status(self.t("ls_corrected_pts", name=src.name,
+            self._set_status(self.t("ls_corrected_pts", name=name,
                                     n=n_done, boxw=self._w_box(n_done)))
         elif n_done:
-            self._set_status(self.t("ls_corrected_nopts", name=src.name,
+            self._set_status(self.t("ls_corrected_nopts", name=name,
                                     n=n_done, boxw=self._w_box(n_done)))
         elif n_boxes:
-            self._set_status(self.t("ls_restored", name=src.name,
+            self._set_status(self.t("ls_restored", name=name,
                                     n=n_boxes, boxw=self._w_box(n_boxes)))
         else:
-            self._set_status(self.t("ls_fresh", name=src.name))
+            self._set_status(self.t("ls_fresh", name=name))
 
     def _update_nav_label(self) -> None:
         total = len(self._image_list)
@@ -1390,7 +1534,8 @@ class PerspectiveApp:
         self._redraw_points()
         self._render_corrected()
         self._update_nav_label()
-        self._set_status(self.t("deleted_ok", n=n, corrw=self._w_corr(n), name=src.name))
+        self._set_status(self.t("deleted_ok", n=n, corrw=self._w_corr(n),
+                                name=self._disp_name(src)))
 
     def _ask_delete_selection(
         self, src: Path, items: list[tuple[str | None, Path]],
@@ -1585,7 +1730,8 @@ class PerspectiveApp:
         self.corrected = processed
         self._render_corrected()
         n = len(processed)
-        self._set_status(self.t("saved_preproc", n=n, imgw=self._w_img(n), name=src.name))
+        self._set_status(self.t("saved_preproc", n=n, imgw=self._w_img(n),
+                                name=self._disp_name(src)))
 
     # -------------------------------------------------------------- Apply ---
 
@@ -1598,7 +1744,10 @@ class PerspectiveApp:
                     names.add(Path(rel_out).name)
         return sorted(names)
 
-    def _ask_save_options(self, src: Path, n_boxes: int) -> list[tuple[str, str]] | None:
+    def _ask_save_options(
+        self, src: Path, n_boxes: int,
+        defaults: list[tuple[str, str]] | None = None,
+    ) -> list[tuple[str, str]] | None:
         dialog = tk.Toplevel(self.root)
         dialog.title(self.t("so_title"))
         dialog.resizable(False, False)
@@ -1625,11 +1774,15 @@ class PerspectiveApp:
                 padx=16, pady=(0, 2), anchor="w"
             )
             lc = ttk.Combobox(dialog, values=self._labels, width=36)
+            if defaults and i < len(defaults):
+                lc.set(defaults[i][0])
             lc.pack(padx=16, pady=(0, 6))
             label_combos.append(lc)
 
             ttk.Label(dialog, text=self.t("so_filename_field")).pack(padx=16, pady=(0, 2), anchor="w")
             default_name = src.name if i == 0 else f"{stem}_{i + 1}{suffix}"
+            if defaults and i < len(defaults) and defaults[i][1]:
+                default_name = defaults[i][1]
             nc = ttk.Combobox(dialog, values=folder_names, width=36)
             nc.set(default_name)
             nc.pack(padx=16, pady=(0, 6))
@@ -1762,7 +1915,403 @@ class PerspectiveApp:
         b = len(to_save)
         pp_note = self.t("pp_note") if self._pp_enabled.get() else ""
         self._set_status(self.t("saved_boxes", b=b, boxw=self._w_box(b),
-                                pp=pp_note, name=src.name))
+                                pp=pp_note, name=self._disp_name(src)))
+
+    # ----------------------------------------- Duplicates / external merge --
+
+    def _collect_crops(self, src: Path) -> list[CropInfo]:
+        """All corrected crops for this original, main first, then each `_X` source."""
+        rel_src = src.relative_to(BASE_DIR).as_posix()
+        crops: list[CropInfo] = []
+        main_pts = list(self.points)
+        for i, cp in enumerate(self._corrected_paths(src)):
+            rel_out = cp.relative_to(OUT_DIR).as_posix()
+            crops.append(CropInfo(
+                source_tag="main", abs_file=cp, rel_out=rel_out,
+                label=label_of(rel_src, rel_out),
+                box_pts=group_box(main_pts, i), exists=cp.exists(),
+            ))
+        for s in self._sources:
+            crops.extend(s.crops_for(rel_src))
+        return crops
+
+    def _source_colors(self, crops: list[CropInfo]) -> dict[str, str]:
+        order: list[str] = []
+        for c in crops:
+            if c.source_tag not in order:
+                order.append(c.source_tag)
+        return {tag: BOX_COLORS[i % len(BOX_COLORS)] for i, tag in enumerate(order)}
+
+    def _load_thumb(self, path: Path, max_w: int, max_h: int):
+        try:
+            data = np.fromfile(str(path), dtype=np.uint8)
+            img = cv2.imdecode(data, cv2.IMREAD_COLOR)
+            if img is None:
+                return None
+            h, w = img.shape[:2]
+            s = min(max_w / w, max_h / h, 1.0)
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            pil = Image.fromarray(rgb).resize(
+                (max(int(w * s), 1), max(int(h * s), 1)), Image.LANCZOS)
+            return ImageTk.PhotoImage(pil)
+        except Exception:
+            return None
+
+    def show_duplicates(self) -> None:
+        if self.image_path is None or self.original is None:
+            messagebox.showinfo(self.t("no_image_title"), self.t("no_image_msg"))
+            return
+        src = Path(self.image_path)
+        crops = self._collect_crops(src)
+        if not any(c.source_tag != "main" for c in crops):
+            messagebox.showinfo(self.t("dup_none_title"),
+                                self.t("dup_none_msg", name=src.name))
+            return
+        kept_idx = self._ask_duplicate_selection(src, crops)
+        if kept_idx is None:
+            return
+        self._apply_duplicate_choice(src, crops, kept_idx)
+
+    def _ask_duplicate_selection(
+        self, src: Path, crops: list[CropInfo],
+    ) -> list[int] | None:
+        """Compare view: original with overlays + a checkbox per crop. Returns kept indices."""
+        colors = self._source_colors(crops)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.t("dup_title", name=src.name))
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        body = ttk.Frame(dialog)
+        body.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+
+        # ── Left: original with all sources' boxes overlaid ─────────────────
+        left = ttk.Frame(body)
+        left.pack(side=tk.LEFT, fill=tk.Y)
+        CW, CH = 600, 650
+        ocanvas = tk.Canvas(left, width=CW, height=CH, bg="#202225",
+                            highlightthickness=0)
+        ocanvas.pack()
+        h, w = self.original.shape[:2]
+        s = min(CW / w, CH / h)
+        nw, nh = max(int(w * s), 1), max(int(h * s), 1)
+        rgb = cv2.cvtColor(self.original, cv2.COLOR_BGR2RGB)
+        dialog._orig_photo = ImageTk.PhotoImage(  # keep ref on dialog
+            Image.fromarray(rgb).resize((nw, nh), Image.LANCZOS))
+        ocanvas.create_image(0, 0, anchor=tk.NW, image=dialog._orig_photo)
+        for c in crops:
+            if not c.box_pts:
+                continue
+            col = colors[c.source_tag]
+            dash = () if c.source_tag == "main" else (6, 4)  # external = dashed, so coincident boxes stay visible
+            pts = [(x * s, y * s) for (x, y) in c.box_pts]
+            for i in range(4):
+                x1, y1 = pts[i]
+                x2, y2 = pts[(i + 1) % 4]
+                ocanvas.create_line(x1, y1, x2, y2, fill=col, width=2, dash=dash)
+
+        legend = ttk.Frame(left)
+        legend.pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(legend, text=self.t("dup_legend")).pack(side=tk.LEFT, padx=(2, 6))
+        for tag, col in colors.items():
+            disp = self.t("dup_card_main") if tag == "main" else tag
+            tk.Label(legend, text="  ", background=col).pack(side=tk.LEFT, padx=(4, 2))
+            ttk.Label(legend, text=disp).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(left, text=self.t("dup_dash_hint"), wraplength=540,
+                  foreground="#888888", font=("Arial", 8), justify=tk.LEFT).pack(
+            fill=tk.X, pady=(2, 0))
+
+        ttk.Separator(body, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8)
+
+        # ── Right: scrollable list of crop cards ────────────────────────────
+        right = ttk.Frame(body)
+        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        RIGHT_W = 420
+        lcanvas = tk.Canvas(right, width=RIGHT_W, highlightthickness=0)
+        vsb = ttk.Scrollbar(right, orient="vertical", command=lcanvas.yview)
+        inner = ttk.Frame(lcanvas)
+        inner.bind("<Configure>",
+                   lambda _e: lcanvas.configure(scrollregion=lcanvas.bbox("all")))
+        lcanvas.create_window((0, 0), window=inner, anchor="nw")
+        lcanvas.configure(yscrollcommand=vsb.set)
+        lcanvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        lcanvas.bind_all("<MouseWheel>",
+                         lambda e: lcanvas.yview_scroll(int(-e.delta / 120), "units"))
+        lcanvas.bind_all("<Button-4>", lambda _e: lcanvas.yview_scroll(-1, "units"))
+        lcanvas.bind_all("<Button-5>", lambda _e: lcanvas.yview_scroll(1, "units"))
+
+        dialog._thumbs = []  # keep refs
+        vars_: list[tk.BooleanVar] = []
+        wrap = RIGHT_W - 36
+        for c in crops:
+            var = tk.BooleanVar(value=False)
+            vars_.append(var)
+            card = ttk.Frame(inner, relief=tk.RIDGE, borderwidth=1)
+            card.pack(fill=tk.X, padx=6, pady=5)
+
+            # Top row: colour swatch + a checkbox labelled with the source.
+            head = ttk.Frame(card)
+            head.pack(fill=tk.X, pady=(2, 0))
+            tk.Label(head, text="  ", background=colors[c.source_tag]).pack(
+                side=tk.LEFT, padx=(4, 6))
+            disp = self.t("dup_card_main") if c.source_tag == "main" else c.source_tag
+            ttk.Checkbutton(head, variable=var, text=disp).pack(side=tk.LEFT)
+
+            # Thumbnail (click to toggle the checkbox).
+            thumb = self._load_thumb(c.abs_file, RIGHT_W - 40, 320) if c.exists else None
+            if thumb is not None:
+                dialog._thumbs.append(thumb)
+                lab = tk.Label(card, image=thumb, background="#202225")
+                lab.pack(anchor="w", padx=8, pady=(2, 4))
+                lab.bind("<Button-1>", lambda _e, v=var: v.set(not v.get()))
+
+            # Details listed under the image (wrap so nothing is cut off).
+            details = ttk.Frame(card)
+            details.pack(fill=tk.X, padx=10, pady=(0, 6))
+            lines = [
+                f"{self.t('dup_field_source')} {disp}",
+                f"{self.t('dup_field_subfolder')} {c.label or self.t('dup_label_none')}",
+                f"{self.t('dup_field_file')} {Path(c.rel_out).name}",
+            ]
+            for ln in lines:
+                ttk.Label(details, text=ln, font=("Arial", 9),
+                          wraplength=wrap, justify=tk.LEFT).pack(anchor="w")
+            note = None
+            if not c.exists:
+                note = self.t("dup_missing")
+            elif c.box_pts is None:
+                note = self.t("dup_no_box")
+            if note:
+                ttk.Label(details, text=note, font=("Arial", 9, "italic"),
+                          foreground="#aa7700", wraplength=wrap,
+                          justify=tk.LEFT).pack(anchor="w", pady=(2, 0))
+
+        result: list[list[int] | None] = [None]
+
+        def on_keep(_event=None) -> None:
+            result[0] = [i for i, v in enumerate(vars_) if v.get()]
+            _cleanup()
+            dialog.destroy()
+
+        def on_cancel(_event=None) -> None:
+            _cleanup()
+            dialog.destroy()
+
+        def _cleanup() -> None:
+            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                lcanvas.unbind_all(seq)
+
+        btns = ttk.Frame(dialog)
+        btns.pack(pady=(2, 10))
+        ttk.Button(btns, text=self.t("dup_keep_btn"), command=on_keep,
+                   width=16).pack(side=tk.LEFT, padx=6)
+        ttk.Button(btns, text=self.t("cancel"), command=on_cancel,
+                   width=12).pack(side=tk.LEFT, padx=6)
+        dialog.bind("<Escape>", on_cancel)
+        dialog.protocol("WM_DELETE_WINDOW", on_cancel)
+
+        dialog.minsize(1000, 720)
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+        px = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        py = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{px}+{py}")
+
+        dialog.wait_window()
+        return result[0]
+
+    def _apply_duplicate_choice(
+        self, src: Path, crops: list[CropInfo], kept_idx: list[int],
+    ) -> None:
+        rel_src = src.relative_to(BASE_DIR).as_posix()
+        rel_src_path = src.relative_to(BASE_DIR)
+
+        kept_sel = {i for i in kept_idx}
+        kept    = [crops[i] for i in range(len(crops)) if i in kept_sel]
+        dropped = [crops[i] for i in range(len(crops)) if i not in kept_sel]
+
+        # Can only import crops whose file is actually on disk.
+        missing = [c for c in kept if not c.exists]
+        kept    = [c for c in kept if c.exists]
+
+        # Re-choose sub-folder/filename for each kept crop (reuses the Apply dialog).
+        if kept:
+            defaults = [(c.label, Path(c.rel_out).name) for c in kept]
+            placements = self._ask_save_options(src, len(kept), defaults=defaults)
+            if placements is None:
+                return
+        else:
+            placements = []
+
+        existing_main = self._corrected_paths(src)
+        ext_kept = [c for c in kept if c.source_tag != "main"]
+        n_keep = len(kept)
+        n_arch = (sum(1 for c in dropped if c.exists) + len(ext_kept))
+
+        # Confirm (strong warning if this would archive every correction).
+        if n_keep == 0 and existing_main:
+            ok = messagebox.askyesno(
+                self.t("dup_confirm_title"),
+                self.t("dup_confirm_all_msg", a=n_arch, name=src.name, arch=str(ARCHIVE_DIR)),
+                icon="warning", default="no")
+        else:
+            ok = messagebox.askyesno(
+                self.t("dup_confirm_title"),
+                self.t("dup_confirm_msg", k=n_keep, a=n_arch, arch=str(ARCHIVE_DIR)))
+        if not ok:
+            return
+
+        # 1) Archive dropped crops first, freeing target paths for kept writes.
+        for c in dropped:
+            if c.exists:
+                archive_move(c.abs_file, ARCHIVE_DIR, c.source_tag, c.rel_out)
+
+        # 2) Write kept crops into the main corrected folder, in order.
+        new_rel_outs: list[str] = []
+        box_groups: list[list | None] = []
+        for c, (label, filename) in zip(kept, placements):
+            if not filename:
+                filename = Path(c.rel_out).name
+            if not Path(filename).suffix:
+                filename += src.suffix
+            if label:
+                rel_out = (rel_src_path.parent / label / filename).as_posix()
+            else:
+                rel_out = (rel_src_path.parent / filename).as_posix()
+            dest = OUT_DIR / Path(rel_out)
+
+            if not (c.source_tag == "main" and dest == c.abs_file):
+                if dest.exists() and dest != c.abs_file:
+                    dest = unique_path(dest)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    if c.source_tag == "main":
+                        shutil.move(str(c.abs_file), str(dest))   # relabel within main
+                    else:
+                        dest.write_bytes(c.abs_file.read_bytes())  # import a copy
+                except Exception:
+                    pass
+            new_rel_outs.append(dest.relative_to(OUT_DIR).as_posix())
+            box_groups.append(c.box_pts)
+            if label and label not in self._labels:
+                self._labels.append(label)
+                self._labels.sort()
+
+        # 3) Archive the external originals of the kept (imported) crops.
+        for c in ext_kept:
+            archive_move(c.abs_file, ARCHIVE_DIR, c.source_tag, c.rel_out)
+
+        # 4) This original is now fully resolved: drop it from every external source.
+        #    (Each source appears once in the loop, so a plain list needs no dedupe.)
+        touched = []
+        for s in self._sources:
+            if s.has(rel_src):
+                s.corrections.pop(rel_src, None)
+                s.boxes_by_rel.pop(rel_src, None)
+                touched.append(s)
+
+        # 5) Update main metadata.
+        if new_rel_outs:
+            self._corrections[rel_src] = new_rel_outs
+        else:
+            self._corrections.pop(rel_src, None)
+        # Write aligned corner points only when every kept crop has them; otherwise
+        # clear (better no overlay than a stale/misaligned one — matches legacy entries
+        # that already carry no points).
+        if new_rel_outs and all(g is not None for g in box_groups):
+            self.points = [tuple(p) for g in box_groups for p in g]
+        else:
+            self.points = []
+        self._saved_points[str(src)] = list(self.points)
+
+        self._save_labels()
+        self._save_corrections()
+        self._save_boxes()
+        for s in touched:
+            s.save()
+
+        # 6) Reload main corrected outputs and refresh both panes.
+        self.corrected = []
+        for cp in self._corrected_paths(src):
+            try:
+                cdata = np.fromfile(str(cp), dtype=np.uint8)
+                img = cv2.imdecode(cdata, cv2.IMREAD_COLOR)
+                if img is not None:
+                    self.corrected.append(img)
+            except Exception:
+                pass
+        self._warped_raw = []
+        self._drag_idx = None
+        if self._pp_save_btn is not None:
+            self._pp_save_btn.config(state=tk.DISABLED)
+        self._redraw_points()
+        self._render_corrected()
+        self._update_nav_label()
+        self._refresh_sources()
+        self._update_dup_state(src)
+
+        extra = ("  " + self.t("dup_kept_missing", n=len(missing))) if missing else ""
+        self._set_status(self.t("dup_done", name=self._disp_name(src), k=n_keep, a=n_arch) + extra)
+
+    # --------------------------------------- Unreachable corrections report --
+
+    def show_orphan_report(self) -> None:
+        local_keys = {p.relative_to(BASE_DIR).as_posix() for p in self._image_list}
+        rows = orphan_corrections(self._sources, local_keys)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(self.t("orphan_title"))
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        ttk.Label(dialog, text=self.t("orphan_intro"), wraplength=580,
+                  justify=tk.LEFT).pack(padx=14, pady=(12, 6), anchor="w")
+        if not rows:
+            ttk.Label(dialog, text=self.t("orphan_empty")).pack(padx=14, pady=12)
+        else:
+            ttk.Label(dialog, text=self.t("orphan_count", n=len(rows))).pack(
+                padx=14, anchor="w")
+            frame = ttk.Frame(dialog)
+            frame.pack(padx=14, pady=6, fill=tk.BOTH, expand=True)
+            txt = tk.Text(frame, width=88, height=min(24, max(6, len(rows) + 1)),
+                          wrap="none")
+            tsb = ttk.Scrollbar(frame, orient="vertical", command=txt.yview)
+            txt.configure(yscrollcommand=tsb.set)
+            for tag, rel_src, outs in rows:
+                txt.insert("end", f"[{tag}]  {rel_src}  →  {', '.join(outs)}\n")
+            txt.config(state="disabled")
+            txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+            tsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btns = ttk.Frame(dialog)
+        btns.pack(pady=(4, 12))
+        if rows:
+            ttk.Button(btns, text=self.t("orphan_save"),
+                       command=lambda: self._save_orphan_report(rows)).pack(
+                side=tk.LEFT, padx=6)
+        ttk.Button(btns, text=self.t("close"), command=dialog.destroy).pack(
+            side=tk.LEFT, padx=6)
+
+        self.root.update_idletasks()
+        dialog.update_idletasks()
+        px = self.root.winfo_x() + max((self.root.winfo_width() - dialog.winfo_width()) // 2, 0)
+        py = self.root.winfo_y() + max((self.root.winfo_height() - dialog.winfo_height()) // 2, 0)
+        dialog.geometry(f"+{px}+{py}")
+
+    def _save_orphan_report(self, rows: list[tuple[str, str, list[str]]]) -> None:
+        path = filedialog.asksaveasfilename(
+            defaultextension=".txt", initialfile="unreachable_corrections.txt",
+            filetypes=[("Text", "*.txt"), ("All files", "*.*")])
+        if not path:
+            return
+        lines = [f"[{tag}]\t{rel_src}\t{', '.join(outs)}" for tag, rel_src, outs in rows]
+        try:
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            self._set_status(self.t("orphan_saved", path=path))
+        except Exception as exc:
+            messagebox.showerror(self.t("save_failed_title"), str(exc))
 
     # ------------------------------------------------------------- Helpers --
 
