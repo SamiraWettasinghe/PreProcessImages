@@ -37,6 +37,8 @@ constants at it, stub the modal dialogs) rather than clicking through the GUI.
 | `app.py`           | The whole GUI: one `PerspectiveApp` class + the `TRANSLATIONS` dict. |
 | `transform.py`     | Pure `four_point_transform(image, pts)` — no GUI; callable standalone. |
 | `merge_sources.py` | Pure logic (no Tk) for discovering/merging external `_X` correction folders. |
+| `assign_docs.py`   | Separate Tk app (`python assign_docs.py`): per-person document assignment. |
+| `documents.py`     | Pure logic (no Tk) backing `assign_docs.py`: scan/plan/apply crop renames. |
 
 `app.py` is a single large class. Everything — rendering, navigation, point editing,
 preprocessing, save/delete, and the external-merge UI — lives there. Keep new
@@ -79,6 +81,39 @@ with its own nested `Akten_selektiert_corrected/` + `corrections.json` / `boxes.
   the owning source's `corrections.json`, so the button self-clears on revisit.
 - **Unreachable…** reports `_X` corrections whose original is absent locally (cannot be
   reached page-by-page).
+
+## Document-assignment app (`assign_docs.py`)
+
+A separate, downstream tool — run **after** the `_X` merge, on the consolidated main
+`Akten_selektiert_corrected/` set only. The cropping app names each crop after its source
+*scan*, which never reveals which **document** it belongs to; and a document's pages can be
+scattered across non-adjacent scans in arbitrary order, which the page-by-page cropping
+flow can't express. `assign_docs.py` shows **all** of one person's crops at once and lets
+the user tag each with a document number + page order, then **renames** the files so the
+name carries the document.
+
+- Naming: an idempotent `_D<doc>_p<page>` suffix on the existing stem, kept in its current
+  type sub-folder — e.g. `002_Alber/S/Alber_026_S.png` → `…/Alber_026_S_D04_p02.png`. Any
+  prior `_D##_p##` is stripped before re-applying, so reassigning never accumulates; clearing
+  a crop's doc strips the suffix back off.
+- Each card also has a **Type** field, so a mis-classified crop can be moved to a different
+  type sub-folder in the same pass (emptied folders are pruned on apply).
+- **Hovering** a thumbnail pops up a borderless, enlarged preview of the crop near the
+  pointer (after `HOVER_DELAY`; `decode_thumb(..., upscale=True)` so small crops still grow).
+- **Clicking** a thumbnail opens a **context view**: the source scan dimmed, with this
+  crop's quadrilateral lit and outlined (region looked up via `corrections.json` → box
+  index → `boxes.json`, with `group_box`); falls back to the enlarged crop when the
+  scan/region is unavailable.
+- Each card has a **Delete** button: after a yes/no confirm it *archives* the crop (moves it
+  to `…__archive/assign_deleted/…`, recoverable — honoring "never delete user data") and
+  drops it from `corrections.json` and its matching box from `boxes.json`. Sibling crops of
+  the same scan re-align by index on the reload; an emptied type folder is pruned. The raw
+  `boxes.json` dict (original absolute keys) is kept in memory so deletions write back.
+- `documents.py` holds the pure logic: `scan_person_crops`, `plan_changes` (handles doc/page
+  *and* type-folder moves uniformly, normalizes pages to `1..n` within a doc, resolves
+  collisions via `unique_path`), and `apply_renames` (moves files — never deletes — keeps
+  `corrections.json`'s `corrected_rel` in step via a reverse index, and prunes emptied
+  sub-folders). Crops with no `corrections.json` entry are renamed but reported.
 
 ## Conventions
 
